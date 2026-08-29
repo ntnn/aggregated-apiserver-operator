@@ -1,0 +1,186 @@
+// Package framework holds utility functions for the e2e tests.
+package framework
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	kcp "github.com/ntnn/kcp-testcontainer"
+	"github.com/stretchr/testify/require"
+	tc "github.com/testcontainers/testcontainers-go"
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
+
+	aggregationv1alpha1 "github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
+	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/config"
+)
+
+const kcpImage = "ghcr.io/kcp-dev/kcp:latest"
+
+// Harness is a per-test environment.
+type Harness struct {
+	Kcp        *kcp.Container
+	Operator   client.Client
+	Members    map[string]client.Client
+	Aggregator client.Client
+}
+
+// New creates a new Harness with a kcp workspace as the control plane
+// and one child workspace for each member.
+func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.AggregatedAPI) *Harness {
+	t.Helper()
+
+	container, err := kcp.Run(t.Context(), kcpImage)
+	require.NoError(t, err)
+	tc.CleanupContainer(t, container)
+
+	prefix := strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-")) + "-"
+	operatorPath, err := container.CreateWorkspaceGenerateName(t.Context(), "root", prefix)
+	require.NoError(t, err)
+
+	operator, err := container.Client(t.Context(), operatorPath, client.Options{Scheme: newScheme(t)})
+	require.NoError(t, err)
+
+	installCRD(t, operator)
+
+	h := &Harness{
+		Kcp:      container,
+		Operator: operator,
+		Members:  map[string]client.Client{},
+	}
+
+	for _, member := range members {
+		memberPath := operatorPath + ":" + member
+		require.NoError(t, container.CreateWorkspace(t.Context(), memberPath))
+
+		cl, err := container.Client(t.Context(), memberPath, client.Options{})
+		require.NoError(t, err)
+		h.Members[member] = cl
+
+		require.NoError(t, operator.Create(t.Context(), &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: member, Namespace: "default"},
+			Data: map[string][]byte{
+				"kubeconfig": rest2kubeconfig(t, container, memberPath),
+			},
+		}))
+	}
+
+	require.NoError(t, operator.Create(t.Context(), aggregatedAPI))
+
+	hostConfig, err := container.RESTConfig(t.Context(), operatorPath)
+	require.NoError(t, err)
+
+	port := freePort(t)
+	runCtx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go func() {
+		if err := config.Run(runCtx, config.Options{
+			AggregatedAPI: aggregatedAPI.Name,
+			HostConfig:    hostConfig,
+			Hostname:      "127.0.0.1",
+			Port:          port,
+		}); err != nil && runCtx.Err() == nil {
+			t.Errorf("api-aggregator exited: %v", err)
+		}
+	}()
+
+	aggregator, err := client.New(&rest.Config{
+		Host:            fmt.Sprintf("https://127.0.0.1:%d", port),
+		TLSClientConfig: rest.TLSClientConfig{Insecure: true},
+	}, client.Options{Scheme: newScheme(t)})
+	require.NoError(t, err)
+	h.Aggregator = aggregator
+
+	// Aggregator ready once the endpoint answers a list.
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), 250*time.Millisecond, time.Minute, true,
+		func(ctx context.Context) (bool, error) {
+			err := aggregator.List(ctx, &corev1.ConfigMapList{}, client.InNamespace("default"))
+			return err == nil, nil
+		}))
+
+	return h
+}
+
+func newScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
+	require.NoError(t, aggregationv1alpha1.AddToScheme(scheme))
+	return scheme
+}
+
+func installCRD(t *testing.T, cl client.Client) {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", "aggregation.ntnn.dev_aggregatedapis.yaml"))
+	require.NoError(t, err)
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	require.NoError(t, yaml.Unmarshal(raw, crd))
+	require.NoError(t, cl.Create(t.Context(), crd))
+
+	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), 100*time.Millisecond, time.Minute, true,
+		func(ctx context.Context) (bool, error) {
+			current := &apiextensionsv1.CustomResourceDefinition{}
+			if err := cl.Get(ctx, client.ObjectKeyFromObject(crd), current); err != nil {
+				return false, err
+			}
+			for _, cond := range current.Status.Conditions {
+				if cond.Type == apiextensionsv1.Established && cond.Status == apiextensionsv1.ConditionTrue {
+					return true, nil
+				}
+			}
+			return false, nil
+		}))
+}
+
+func rest2kubeconfig(t *testing.T, container *kcp.Container, path string) []byte {
+	t.Helper()
+
+	restConfig, err := container.RESTConfig(t.Context(), path)
+	require.NoError(t, err)
+
+	kubeconfig := clientcmdapi.Config{
+		Clusters: map[string]*clientcmdapi.Cluster{path: {
+			Server:                   restConfig.Host,
+			CertificateAuthorityData: restConfig.CAData,
+			InsecureSkipTLSVerify:    restConfig.Insecure,
+		}},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{path: {
+			Token: restConfig.BearerToken,
+		}},
+		Contexts: map[string]*clientcmdapi.Context{path: {
+			Cluster:  path,
+			AuthInfo: path,
+		}},
+		CurrentContext: path,
+	}
+	raw, err := clientcmd.Write(kubeconfig)
+	require.NoError(t, err)
+	return raw
+}
+
+func freePort(t *testing.T) int {
+	t.Helper()
+
+	l, err := new(net.ListenConfig).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
+}

@@ -18,10 +18,12 @@ build:
 
 .PHONY: test
 test:
-	@for mod in $(MODULES); do \
-		echo "test $$mod"; \
-		(cd $$mod && $(GO) test ./...) || exit 1; \
-	done
+	$(GO) test ./cmd/... ./pkg/...
+	cd apis && $(GO) test ./...
+
+.PHONY: test-e2e
+test-e2e:
+	$(GO) test -timeout 30m ./test/e2e/...
 
 .PHONY: tidy
 tidy:
