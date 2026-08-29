@@ -71,12 +71,16 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 		require.NoError(t, err)
 		h.Members[member] = cl
 
-		require.NoError(t, operator.Create(t.Context(), &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: member, Namespace: "default"},
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      member,
+				Namespace: "default",
+			},
 			Data: map[string][]byte{
 				"kubeconfig": rest2kubeconfig(t, container, memberPath),
 			},
-		}))
+		}
+		require.NoError(t, operator.Create(t.Context(), secret))
 	}
 
 	require.NoError(t, operator.Create(t.Context(), aggregatedAPI))
@@ -98,19 +102,25 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 		}
 	}()
 
-	aggregator, err := client.New(&rest.Config{
-		Host:            fmt.Sprintf("https://127.0.0.1:%d", port),
-		TLSClientConfig: rest.TLSClientConfig{Insecure: true},
-	}, client.Options{Scheme: newScheme(t)})
+	aggregatorConfig := &rest.Config{
+		Host: fmt.Sprintf("https://127.0.0.1:%d", port),
+		TLSClientConfig: rest.TLSClientConfig{
+			Insecure: true,
+		},
+	}
+	aggregator, err := client.New(aggregatorConfig, client.Options{Scheme: newScheme(t)})
 	require.NoError(t, err)
 	h.Aggregator = aggregator
 
 	// Aggregator ready once the endpoint answers a list.
-	require.NoError(t, wait.PollUntilContextTimeout(t.Context(), 250*time.Millisecond, time.Minute, true,
-		func(ctx context.Context) (bool, error) {
-			err := aggregator.List(ctx, &corev1.ConfigMapList{}, client.InNamespace("default"))
-			return err == nil, nil
-		}))
+	require.NoError(t,
+		wait.PollUntilContextTimeout(t.Context(), 250*time.Millisecond, time.Minute, true,
+			func(ctx context.Context) (bool, error) {
+				err := aggregator.List(ctx, &corev1.ConfigMapList{}, client.InNamespace("default"))
+				return err == nil, nil
+			},
+		),
+	)
 
 	return h
 }
@@ -156,19 +166,25 @@ func rest2kubeconfig(t *testing.T, container *kcp.Container, path string) []byte
 	require.NoError(t, err)
 
 	kubeconfig := clientcmdapi.Config{
-		Clusters: map[string]*clientcmdapi.Cluster{path: {
-			Server:                   restConfig.Host,
-			CertificateAuthorityData: restConfig.CAData,
-			InsecureSkipTLSVerify:    restConfig.Insecure,
-		}},
-		AuthInfos: map[string]*clientcmdapi.AuthInfo{path: {
-			Token: restConfig.BearerToken,
-		}},
-		Contexts: map[string]*clientcmdapi.Context{path: {
-			Cluster:  path,
-			AuthInfo: path,
-		}},
-		CurrentContext: path,
+		Clusters: map[string]*clientcmdapi.Cluster{
+			"default": {
+				Server:                   restConfig.Host,
+				CertificateAuthorityData: restConfig.CAData,
+				InsecureSkipTLSVerify:    restConfig.Insecure,
+			},
+		},
+		AuthInfos: map[string]*clientcmdapi.AuthInfo{
+			"default": {
+				Token: restConfig.BearerToken,
+			},
+		},
+		Contexts: map[string]*clientcmdapi.Context{
+			"default": {
+				Cluster:  "default",
+				AuthInfo: "default",
+			},
+		},
+		CurrentContext: "default",
 	}
 	raw, err := clientcmd.Write(kubeconfig)
 	require.NoError(t, err)
