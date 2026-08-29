@@ -6,7 +6,7 @@ GOLANGCI_LINT_VER := 2.11.0
 GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VER)
 
 .PHONY: all
-all: build
+all: lint-fix test test-integration test-e2e
 
 .PHONY: build
 build:
@@ -18,10 +18,16 @@ build:
 
 .PHONY: test
 test:
-	@for mod in $(MODULES); do \
-		echo "test $$mod"; \
-		(cd $$mod && $(GO) test ./...) || exit 1; \
-	done
+	$(GO) test ./cmd/... ./pkg/...
+	cd apis && $(GO) test ./...
+
+.PHONY: test-integration
+test-integration:
+	$(GO) test -timeout 30m ./test/integration/...
+
+.PHONY: test-e2e
+test-e2e:
+	$(GO) test -timeout 30m ./test/e2e/...
 
 .PHONY: tidy
 tidy:
