@@ -12,9 +12,12 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/dynamic"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"
+	clienttesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,8 +48,8 @@ func newTestReconciler(t *testing.T, objects ...runtime.Object) *reconciler {
 			WithRuntimeObjects(objects...).
 			WithStatusSubresource(&v1alpha1.AggregatedAPI{}).
 			Build(),
-		DiscoverResources: func(*rest.Config) ([]apiserver.ServedResource, error) {
-			return []apiserver.ServedResource{testResource()}, nil
+		DiscoveryClient: func(*rest.Config) (discovery.DiscoveryInterface, error) {
+			return fakeDiscoveryClient(), nil
 		},
 		DynamicClient: func(*rest.Config) (dynamic.Interface, error) {
 			return fakeDynamicClient(), nil
@@ -57,19 +60,24 @@ func newTestReconciler(t *testing.T, objects ...runtime.Object) *reconciler {
 	return &reconciler{opts: opts, log: testr.New(t)}
 }
 
-func testResource() apiserver.ServedResource {
-	return apiserver.ServedResource{
-		GVR:        schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"},
-		Kind:       schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "Deployment"},
-		Namespaced: true,
-		Singular:   "deployment",
-	}
-}
-
 func fakeDynamicClient() dynamic.Interface {
 	scheme := runtime.NewScheme()
 	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: "DeploymentList"}, &unstructured.UnstructuredList{})
 	return dynamicfake.NewSimpleDynamicClient(scheme)
+}
+
+// fakeDiscoveryClient serves a static discovery document with apps/v1 deployments.
+func fakeDiscoveryClient() discovery.DiscoveryInterface {
+	fakeClient := &fakediscovery.FakeDiscovery{Fake: &clienttesting.Fake{}}
+	fakeClient.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "apps/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "deployments", SingularName: "deployment", Kind: "Deployment", Namespaced: true},
+			},
+		},
+	}
+	return fakeClient
 }
 
 func kubeconfigSecret(t *testing.T, name string) *corev1.Secret {
@@ -139,7 +147,7 @@ func TestReconciler_reconcile(t *testing.T) {
 			aggregatedAPI("member-a"),
 			kubeconfigSecret(t, "member-a"),
 		)
-		require.NoError(t, r.opts.Server.SetCluster("stale", fakeDynamicClient(), []apiserver.ServedResource{testResource()}))
+		require.NoError(t, r.opts.Server.SetCluster("stale", fakeDynamicClient(), fakeDiscoveryClient(), []v1alpha1.APISelector{{Group: "apps"}}))
 
 		_, err := r.reconcile(t.Context())
 		require.NoError(t, err)

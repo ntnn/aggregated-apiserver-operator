@@ -4,10 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"maps"
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -15,7 +15,11 @@ import (
 
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	genericoptions "k8s.io/apiserver/pkg/server/options"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
 )
 
 // Options configures a Server.
@@ -29,6 +33,10 @@ type Options struct {
 	// TLSCertFile and TLSKeyFile are the serving certificate; empty self-signs.
 	TLSCertFile string
 	TLSKeyFile  string
+
+	// ResyncInterval is how often member discovery is re-resolved to pick
+	// up remote API changes.
+	ResyncInterval time.Duration
 }
 
 func (o *Options) defaults() {
@@ -37,6 +45,9 @@ func (o *Options) defaults() {
 	}
 	if o.Port == 0 {
 		o.Port = 6443
+	}
+	if o.ResyncInterval == 0 {
+		o.ResyncInterval = 30 * time.Second
 	}
 }
 
@@ -47,6 +58,7 @@ func (o *Options) RegisterFlags(fs *flag.FlagSet) {
 	fs.IntVar(&o.Port, "port", o.Port, "port to serve the aggregated API on")
 	fs.StringVar(&o.TLSCertFile, "tls-cert-file", o.TLSCertFile, "serving certificate, empty generates a self-signed pair")
 	fs.StringVar(&o.TLSKeyFile, "tls-key-file", o.TLSKeyFile, "serving key, empty generates a self-signed pair")
+	fs.DurationVar(&o.ResyncInterval, "resync-interval", o.ResyncInterval, "how often member discovery is re-resolved")
 }
 
 // URL returns the endpoint URL the server serves on.
@@ -54,15 +66,40 @@ func (o *Options) URL() string {
 	return fmt.Sprintf("https://%s:%d", o.Hostname, o.Port)
 }
 
+type memberCluster struct {
+	client    dynamic.Interface
+	discovery discovery.DiscoveryInterface
+	selectors []v1alpha1.APISelector
+	// resources is the last resolve result.
+	resources []ServedResource
+}
+
+// resolve discovers and filters the cluster's resources into
+// m.resources, reporting whether they changed.
+func (m *memberCluster) resolve() (bool, error) {
+	_, resourceLists, err := m.discovery.ServerGroupsAndResources()
+	if err != nil {
+		return false, fmt.Errorf("discovering server resources: %w", err)
+	}
+	resources, err := FromDiscovery(resourceLists)
+	if err != nil {
+		return false, fmt.Errorf("reading discovery: %w", err)
+	}
+	resources = Filter(resources, m.selectors)
+	if reflect.DeepEqual(resources, m.resources) {
+		return false, nil
+	}
+	m.resources = resources
+	return true, nil
+}
+
 // Server serves an aggregated API whose clusters and resources can change at runtime.
 type Server struct {
 	opts    Options
 	handler atomic.Pointer[http.Handler]
 
-	// mu guards clusters, byCluster and the inner rebuild sequence.
 	mu          sync.Mutex
-	clusters    map[string]dynamic.Interface
-	byCluster   map[string][]ServedResource
+	members     map[string]*memberCluster
 	resources   []ServedResource
 	stopWatches context.CancelFunc
 }
@@ -72,9 +109,8 @@ func New(opts Options) (*Server, error) {
 	opts.defaults()
 
 	server := &Server{
-		opts:      opts,
-		clusters:  map[string]dynamic.Interface{},
-		byCluster: map[string][]ServedResource{},
+		opts:    opts,
+		members: map[string]*memberCluster{},
 	}
 	server.storeHandler(http.NotFoundHandler())
 	return server, nil
@@ -114,13 +150,21 @@ func (s *Server) URL() string {
 	return s.opts.URL()
 }
 
-// SetCluster adds or updates a member cluster and its served resources.
-func (s *Server) SetCluster(name string, client dynamic.Interface, resources []ServedResource) error {
+// SetCluster adds or updates a member cluster.
+func (s *Server) SetCluster(name string, client dynamic.Interface, discoveryClient discovery.DiscoveryInterface, selectors []v1alpha1.APISelector) error {
+	member := &memberCluster{
+		client:    client,
+		discovery: discoveryClient,
+		selectors: selectors,
+	}
+	if _, err := member.resolve(); err != nil {
+		return fmt.Errorf("resolving cluster %q: %w", name, err)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.clusters[name] = client
-	s.byCluster[name] = resources
+	s.members[name] = member
 	return s.rebuild()
 }
 
@@ -129,8 +173,8 @@ func (s *Server) Clusters() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	names := make([]string, 0, len(s.clusters))
-	for name := range s.clusters {
+	names := make([]string, 0, len(s.members))
+	for name := range s.members {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -142,17 +186,24 @@ func (s *Server) RemoveCluster(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.clusters, name)
-	delete(s.byCluster, name)
+	delete(s.members, name)
 	return s.rebuild()
 }
 
 // rebuild rebuilds the generic API server.
 // Callers hold s.mu.
 func (s *Server) rebuild() error {
-	resources, err := Union(s.byCluster)
+	byCluster := make(map[string][]ServedResource, len(s.members))
+	for name, member := range s.members {
+		byCluster[name] = member.resources
+	}
+	resources, err := Union(byCluster)
 	if err != nil {
 		return fmt.Errorf("merging served resources: %w", err)
+	}
+
+	if reflect.DeepEqual(resources, s.resources) {
+		return nil
 	}
 
 	if len(resources) == 0 {
@@ -161,7 +212,10 @@ func (s *Server) rebuild() error {
 		return nil
 	}
 
-	clusters := maps.Clone(s.clusters)
+	clusters := make(map[string]dynamic.Interface, len(s.members))
+	for name, member := range s.members {
+		clusters[name] = member.client
+	}
 	ctx, stopWatches := context.WithCancel(context.Background())
 	inner, err := newGenericServer(s.opts.Hostname, s.opts.Port, resources, clusters, ctx.Done())
 	if err != nil {
@@ -195,6 +249,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	go s.resyncLoop(ctx)
 	stopCh := ctx.Done()
 	stoppedCh, listenerStoppedCh, err := serving.Serve(s, 10*time.Second, stopCh)
 	if err != nil {
@@ -203,4 +258,45 @@ func (s *Server) Run(ctx context.Context) error {
 	<-listenerStoppedCh
 	<-stoppedCh
 	return nil
+}
+
+// TODO(ntnn): not happy with a resync to update discovery, but watching
+// CRDs is not enough in case the target is also an aggregate.
+// Maybe there's some other way to get updates from discovery that
+// I don't know.
+func (s *Server) resyncLoop(ctx context.Context) {
+	ticker := time.NewTicker(s.opts.ResyncInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		s.resync(ctx)
+	}
+}
+
+func (s *Server) resync(ctx context.Context) {
+	log := ctrllog.FromContext(ctx)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := false
+	for name, member := range s.members {
+		memberChanged, err := member.resolve()
+		if err != nil {
+			// keep serving the last known set; the next tick retries
+			log.Error(err, "resolving cluster discovery", "cluster", name)
+			continue
+		}
+		changed = changed || memberChanged
+	}
+	if !changed {
+		return
+	}
+	if err := s.rebuild(); err != nil {
+		log.Error(err, "rebuilding after discovery resync")
+	}
 }

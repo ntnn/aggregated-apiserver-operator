@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
-	"github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
 )
 
 // reconciler holds the state of a single reconcile pass.
@@ -98,12 +97,12 @@ func (r *reconciler) registerCluster(ctx context.Context, name string, cluster v
 	if err != nil {
 		return fmt.Errorf("building dynamic client: %w", err)
 	}
-	discovered, err := r.opts.DiscoverResources(config)
+	discoveryClient, err := r.opts.DiscoveryClient(config)
 	if err != nil {
-		return fmt.Errorf("discovering resources: %w", err)
+		return fmt.Errorf("building discovery client: %w", err)
 	}
 
-	if err := r.opts.Server.SetCluster(name, dynamicClient, apiserver.Filter(discovered, cluster.APIs)); err != nil {
+	if err := r.opts.Server.SetCluster(name, dynamicClient, discoveryClient, cluster.APIs); err != nil {
 		return fmt.Errorf("registering on the server: %w", err)
 	}
 	return nil

@@ -37,9 +37,9 @@ type Options struct {
 	// Server is the aggregated API server clusters are registered on.
 	Server *apiserver.Server
 
-	// DiscoverResources returns a cluster's discovered resources.
-	// Defaults to [DiscoverResources].
-	DiscoverResources func(config *rest.Config) ([]apiserver.ServedResource, error)
+	// DiscoveryClient builds a cluster's discovery client.
+	// Defaults to [discovery.NewDiscoveryClientForConfig].
+	DiscoveryClient func(config *rest.Config) (discovery.DiscoveryInterface, error)
 
 	// DynamicClient builds a cluster's dynamic client.
 	// Defaults to [dynamic.NewForConfig].
@@ -70,8 +70,10 @@ func (o *Options) validate() error {
 	if o.Server == nil {
 		return errors.New("a Server is required")
 	}
-	if o.DiscoverResources == nil {
-		o.DiscoverResources = DiscoverResources
+	if o.DiscoveryClient == nil {
+		o.DiscoveryClient = func(config *rest.Config) (discovery.DiscoveryInterface, error) {
+			return discovery.NewDiscoveryClientForConfig(config)
+		}
 	}
 	if o.DynamicClient == nil {
 		o.DynamicClient = func(config *rest.Config) (dynamic.Interface, error) {
@@ -125,23 +127,6 @@ func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		log:  ctrllog.FromContext(ctx),
 	}
 	return r.reconcile(ctx)
-}
-
-// DiscoverResources is the live DiscoverResources implementation.
-func DiscoverResources(config *rest.Config) ([]apiserver.ServedResource, error) {
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("building discovery client: %w", err)
-	}
-	_, resourceLists, err := discoveryClient.ServerGroupsAndResources()
-	if err != nil {
-		return nil, fmt.Errorf("discovering server resources: %w", err)
-	}
-	resources, err := apiserver.FromDiscovery(resourceLists)
-	if err != nil {
-		return nil, fmt.Errorf("reading discovery: %w", err)
-	}
-	return resources, nil
 }
 
 // restConfigFromSecret parses the "kubeconfig" key of a Secret.
