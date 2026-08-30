@@ -18,6 +18,7 @@ type ServedResource struct {
 	Kind       schema.GroupVersionKind
 	Namespaced bool
 	Singular   string
+	Status     bool
 	Clusters   []string
 }
 
@@ -29,6 +30,12 @@ func FromDiscovery(resourceLists []*metav1.APIResourceList) ([]ServedResource, e
 		if err != nil {
 			return nil, fmt.Errorf("parsing discovered groupVersion %q: %w", list.GroupVersion, err)
 		}
+		status := map[string]bool{}
+		for _, resource := range list.APIResources {
+			if parent, found := strings.CutSuffix(resource.Name, "/status"); found {
+				status[parent] = true
+			}
+		}
 		for _, resource := range list.APIResources {
 			if strings.Contains(resource.Name, "/") {
 				continue
@@ -38,6 +45,7 @@ func FromDiscovery(resourceLists []*metav1.APIResourceList) ([]ServedResource, e
 				Kind:       gv.WithKind(resource.Kind),
 				Namespaced: resource.Namespaced,
 				Singular:   resource.SingularName,
+				Status:     status[resource.Name],
 			})
 		}
 	}
@@ -85,6 +93,8 @@ func Union(byCluster map[string][]ServedResource) ([]ServedResource, error) {
 			if existing.Kind != resource.Kind || existing.Namespaced != resource.Namespaced {
 				return nil, fmt.Errorf("clusters disagree on %s: kind/scope conflict between %v and %q", resource.GVR, existing.Clusters, cluster)
 			}
+			// any cluster having the subresource means it is served
+			existing.Status = existing.Status || resource.Status
 			existing.Clusters = append(existing.Clusters, cluster)
 		}
 	}

@@ -89,6 +89,9 @@ func installResources(server *genericapiserver.GenericAPIServer, resources []Ser
 			byGroupVersion[gv] = map[string]rest.Storage{}
 		}
 		byGroupVersion[gv][resource.GVR.Resource] = store
+		if resource.Status {
+			byGroupVersion[gv][resource.GVR.Resource+"/status"] = storage.NewStatus(store)
+		}
 	}
 
 	for gv, storageMap := range byGroupVersion {
