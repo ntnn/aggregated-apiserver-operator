@@ -1,0 +1,60 @@
+apiVersion: aggregation.ntnn.dev/v1alpha1
+kind: AggregatedAPI
+metadata:
+  name: kro-example
+  namespace: default
+spec:
+  image: ghcr.io/ntnn/aggregated-apiserver-operator/api-aggregator:dev
+  # a very short resync interval for the example so kro doesn't error
+  # for 30s when the rgd is installed until the api-aggregator resyncs
+  # discovery - default is 30s
+  resyncInterval: 5s
+  clusters:
+    # the cluster api-aggregator and kro runs on
+    - access:
+        name: host
+      apis:
+        # since kro is only targeting a single control plane the APIs
+        # from the "management" cluster must be exposed in the
+        # api-aggregator
+        - group: kro.run
+        - group: internal.kro.run
+        - group: apiextensions.k8s.io
+        - group: ""
+          resources:
+            - events
+            - namespaces
+        - group: events.k8s.io
+        - group: coordination.k8s.io
+          resources:
+            - leases
+    # the cluster that minio will be deployed on
+    - access:
+        name: storage
+      apis:
+        - group: apps
+          resources:
+            - deployments
+        - group: batch
+          resources:
+            - jobs
+        - group: ""
+          resources:
+            - services
+            - pods
+            - configmaps
+    # the cluster the registry will be deployed on
+    - access:
+        name: registry
+      apis:
+        - group: apps
+          resources:
+            - deployments
+        - group: batch
+          resources:
+            - jobs
+        - group: ""
+          resources:
+            - services
+            - pods
+            - configmaps

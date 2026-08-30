@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: default
+resources:
+  - https://github.com/kubernetes-sigs/kro/releases/download/v0.9.3/kro-core-install-manifests.yaml
+# point kro at the aggregated endpoint through the kubeconfig Secret
+# TODO(ntnn): use the helm chart once v0.9.4 is published
+# v0.9.3's chart does not render extraVolumes/extraEnv
+patches:
+  - target:
+      kind: Deployment
+      name: kro
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kro
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: aggregated
+                secret:
+                  secretName: kro-example-kubeconfig
+            containers:
+              - name: kro
+                env:
+                  - name: KUBECONFIG
+                    value: /aggregated/kubeconfig
+                volumeMounts:
+                  - name: aggregated
+                    mountPath: /aggregated
+                    readOnly: true

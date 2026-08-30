@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../../config/operator
+images:
+  - name: ghcr.io/ntnn/aggregated-apiserver-operator/operator
+    newTag: dev
