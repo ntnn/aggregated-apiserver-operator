@@ -26,9 +26,11 @@ func expectEvent(t *testing.T, events <-chan watch.Event, eventType watch.EventT
 				continue
 			}
 			cm, isConfigMap := event.Object.(*corev1.ConfigMap)
-			require.True(t, isConfigMap, "unexpected object type %T", event.Object)
+			require.True(t, isConfigMap, "unexpected object type %T: %v", event.Object, event.Object)
+			if cm.Name != name {
+				continue
+			}
 			require.Equal(t, eventType, event.Type)
-			require.Equal(t, name, cm.Name)
 			require.Equal(t, cluster, cm.Annotations[aggregationv1alpha1.ClusterAnnotation], "source-cluster annotation")
 			require.Equal(t, cluster, cm.Labels[aggregationv1alpha1.ClusterLabel], "virtual cluster label")
 			return

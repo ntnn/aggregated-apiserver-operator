@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/utils/ptr"
 
 	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
 )
@@ -131,4 +132,46 @@ func TestStorage_Watch_done(t *testing.T) {
 	// closing Done must end running watches
 	close(done)
 	requireClosed(t, watcher.ResultChan())
+}
+
+func TestStorage_Watch_watchList(t *testing.T) {
+	t.Parallel()
+
+	storage := newTestStorage(t, map[string][]runtime.Object{
+		"east": {deployment("default", "existing-east")},
+		"west": {deployment("default", "existing-west")},
+	})
+
+	watcher, err := storage.Watch(testContext("default"), &metainternalversion.ListOptions{
+		SendInitialEvents:   ptr.To(true),
+		AllowWatchBookmarks: true,
+	})
+	require.NoError(t, err)
+	t.Cleanup(watcher.Stop)
+
+	names := map[string]string{}
+	for range 2 {
+		eventType, obj := nextUnstructured(t, watcher.ResultChan())
+		require.Equal(t, watch.Added, eventType)
+		names[obj.GetName()] = obj.GetAnnotations()[v1alpha1.ClusterAnnotation]
+	}
+	assert.Equal(t, map[string]string{
+		"existing-east": "east",
+		"existing-west": "west",
+	}, names)
+
+	eventType, obj := nextUnstructured(t, watcher.ResultChan())
+	require.Equal(t, watch.Bookmark, eventType)
+	assert.Equal(t, "true", obj.GetAnnotations()[metav1.InitialEventsAnnotationKey])
+
+	// live events follow the bookmark
+	_, err = storage.opts.Clusters["east"].
+		Resource(testGVR).
+		Namespace("default").
+		Create(t.Context(), deployment("default", "after-bookmark"), metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	eventType, obj = nextUnstructured(t, watcher.ResultChan())
+	assert.Equal(t, watch.Added, eventType)
+	assert.Equal(t, "after-bookmark", obj.GetName())
 }
