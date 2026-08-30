@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"encoding/json"
+	"io"
 
 	generatedopenapi "k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,6 +55,35 @@ func (f defaultingNegotiatedSerializer) SupportedMediaTypes() []runtime.Serializ
 		infos[i].StreamSerializer = newProtoRoundTripStreamSerializer()
 	}
 	return infos
+}
+
+func (f defaultingNegotiatedSerializer) EncoderForVersion(encoder runtime.Encoder, gv runtime.GroupVersioner) runtime.Encoder {
+	return splitEncoder{
+		unstructured: encoder,
+		typed:        f.CodecFactory.EncoderForVersion(encoder, gv),
+	}
+}
+
+type splitEncoder struct {
+	unstructured runtime.Encoder
+	typed        runtime.Encoder
+}
+
+func (e splitEncoder) Identifier() runtime.Identifier {
+	return "split:" + e.typed.Identifier()
+}
+
+func (e splitEncoder) Encode(obj runtime.Object, w io.Writer) error {
+	// skip the versioning encoder for responses which are already unstructured.
+	// the scheme uses the reflected type (u.U) to match to the
+	// registered GVK - which is then random because everything is
+	// served as u.U.
+	// This prevents something that is already unstructured and carries
+	// the correct GVK from being mis-identified.
+	if _, ok := obj.(runtime.Unstructured); ok {
+		return e.unstructured.Encode(obj, w) //nolint:wrapcheck // pass-through encoder
+	}
+	return e.typed.Encode(obj, w) //nolint:wrapcheck // pass-through encoder
 }
 
 func (f defaultingNegotiatedSerializer) DecoderToVersion(decoder runtime.Decoder, gv runtime.GroupVersioner) runtime.Decoder {
