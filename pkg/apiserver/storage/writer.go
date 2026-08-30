@@ -76,9 +76,21 @@ func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidati
 	return created, nil
 }
 
+func (s *Storage) bodyCluster(ctx context.Context, objInfo rest.UpdatedObjectInfo) string {
+	obj, err := objInfo.UpdatedObject(ctx, s.New())
+	if err != nil {
+		return ""
+	}
+	accessor, ok := obj.(metav1.Object)
+	if !ok {
+		return ""
+	}
+	return accessor.GetAnnotations()[v1alpha1.ClusterAnnotation]
+}
+
 // Update routes to the cluster owning the existing object.
 func (s *Storage) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc, forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
-	cluster, existing, err := s.locate(ctx, name, nil)
+	cluster, existing, err := s.locate(ctx, name, nil, s.bodyCluster(ctx, objInfo))
 	if apierrors.IsNotFound(err) && forceAllowCreate {
 		// the objects exists in no remote and forceAllowCreate/SSA is used
 		// pass the object to .Create
@@ -127,7 +139,7 @@ func (s *Storage) Update(ctx context.Context, name string, objInfo rest.UpdatedO
 
 // Delete routes to the cluster owning the object; ambiguous names conflict.
 func (s *Storage) Delete(ctx context.Context, name string, deleteValidation rest.ValidateObjectFunc, options *metav1.DeleteOptions) (runtime.Object, bool, error) {
-	cluster, existing, err := s.locate(ctx, name, nil)
+	cluster, existing, err := s.locate(ctx, name, nil, "")
 	if err != nil {
 		return nil, false, err
 	}

@@ -21,7 +21,7 @@ import (
 
 // Get probes all member clusters.
 func (s *Storage) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
-	cluster, obj, err := s.locate(ctx, name, options)
+	cluster, obj, err := s.locate(ctx, name, options, "")
 	if err != nil {
 		return nil, err
 	}
@@ -29,11 +29,25 @@ func (s *Storage) Get(ctx context.Context, name string, options *metav1.GetOptio
 	return obj, nil
 }
 
-// locate finds name in exactly one cluster
-func (s *Storage) locate(ctx context.Context, name string, options *metav1.GetOptions) (string, *unstructured.Unstructured, error) {
+// locate finds name in exactly one cluster.
+// If cluster is passed that cluster is queried.
+// Otherwise all clusters in the storage are queried with multiple hits being a conflict.
+func (s *Storage) locate(ctx context.Context, name string, options *metav1.GetOptions, cluster string) (string, *unstructured.Unstructured, error) {
 	namespace := request.NamespaceValue(ctx)
 	if options == nil {
 		options = &metav1.GetOptions{}
+	}
+
+	if cluster != "" {
+		client, ok := s.opts.Clusters[cluster]
+		if !ok {
+			return "", nil, apierrors.NewBadRequest(fmt.Sprintf("cluster %q is not part of this aggregated API", cluster))
+		}
+		obj, err := s.client(client, namespace).Get(ctx, name, *options)
+		if err != nil {
+			return "", nil, err //nolint:wrapcheck // remote apierrors pass through
+		}
+		return cluster, obj, nil
 	}
 
 	type hit struct {

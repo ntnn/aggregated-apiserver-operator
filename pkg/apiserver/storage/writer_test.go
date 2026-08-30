@@ -132,6 +132,40 @@ func TestStorage_Update(t *testing.T) {
 		assert.True(t, apierrors.IsConflict(err), "expected Conflict, got %v", err)
 	})
 
+	t.Run("ambiguous name routed by the body's cluster annotation", func(t *testing.T) {
+		t.Parallel()
+
+		storage := newTestStorage(t, map[string][]runtime.Object{
+			"east": {deployment("default", "web")},
+			"west": {deployment("default", "web")},
+		})
+
+		updated := deployment("default", "web")
+		updated.SetAnnotations(map[string]string{v1alpha1.ClusterAnnotation: "west"})
+		updated.SetLabels(map[string]string{"app": "web"})
+
+		obj, _, err := storage.Update(testContext("default"), "web",
+			rest.DefaultUpdatedObjectInfo(updated), nil, nil, false, &metav1.UpdateOptions{})
+		require.NoError(t, err)
+
+		got := obj.(*unstructured.Unstructured)
+		assert.Equal(t, "west", got.GetAnnotations()[v1alpha1.ClusterAnnotation])
+
+		remote, err := storage.opts.Clusters["west"].
+			Resource(testGVR).
+			Namespace("default").
+			Get(t.Context(), "web", metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, "web", remote.GetLabels()["app"], "update must land on the annotated cluster")
+
+		untouched, err := storage.opts.Clusters["east"].
+			Resource(testGVR).
+			Namespace("default").
+			Get(t.Context(), "web", metav1.GetOptions{})
+		require.NoError(t, err)
+		assert.Empty(t, untouched.GetLabels()["app"], "the other cluster's copy must stay untouched")
+	})
+
 	t.Run("missing object is NotFound", func(t *testing.T) {
 		t.Parallel()
 
@@ -201,4 +235,20 @@ func TestStorage_DeleteCollection(t *testing.T) {
 		// asserted in the integration test; here only the fan-out and stamping
 		assert.True(t, clusters["east"] && clusters["west"], "delete must fan out over both clusters")
 	})
+}
+
+func TestStorage_Update_annotationPinsCluster(t *testing.T) {
+	t.Parallel()
+
+	storage := newTestStorage(t, map[string][]runtime.Object{
+		"east": {deployment("default", "web")},
+		"west": {},
+	})
+
+	updated := deployment("default", "web")
+	updated.SetAnnotations(map[string]string{v1alpha1.ClusterAnnotation: "west"})
+
+	_, _, err := storage.Update(testContext("default"), "web",
+		rest.DefaultUpdatedObjectInfo(updated), nil, nil, false, &metav1.UpdateOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "expected NotFound from the pinned cluster, got %v", err)
 }
