@@ -101,6 +101,11 @@ spec:
                 description: Image overrides the api-aggregator image serving this
                   object.
                 type: string
+              resyncInterval:
+                description: |-
+                  ResyncInterval is how often the server updates discovery from the targeted clusters.
+                  Defaults to 30s.
+                type: string
             required:
             - clusters
             type: object
