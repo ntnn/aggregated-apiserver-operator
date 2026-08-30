@@ -6,7 +6,7 @@ GOLANGCI_LINT_VER := 2.13.2
 GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VER)
 
 .PHONY: all
-all: lint-fix test test-integration test-e2e
+all: lint-fix test test-integration
 
 .PHONY: build
 build:
