@@ -18,13 +18,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/yaml"
@@ -94,10 +95,9 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	hostConfig, err := container.RESTConfig(t.Context(), operatorPath)
 	require.NoError(t, err)
 
-	scheme, err := config.Scheme()
-	require.NoError(t, err)
+	ctrllog.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(testWriter{t})))
+
 	mgr, err := ctrl.NewManager(hostConfig, manager.Options{
-		Scheme:  scheme,
 		Metrics: metricsserver.Options{BindAddress: "0"},
 	})
 	require.NoError(t, err)
@@ -106,16 +106,20 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	runCtx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	go func() {
-		server, err := config.Setup(mgr, config.Options{
-			Server: apiserverpkg.Options{
-				Hostname: "127.0.0.1",
-				Port:     port,
-			},
+		server, err := apiserverpkg.New(apiserverpkg.Options{
+			Hostname: "127.0.0.1",
+			Port:     port,
+		})
+		if err != nil {
+			t.Errorf("api-aggregator server: %v", err)
+			return
+		}
+		if err := config.Setup(mgr, config.Options{
+			Server: server,
 			AggregatedAPI: aggregatedapi.Options{
 				AggregatedAPI: aggregatedAPI.Name,
 			},
-		})
-		if err != nil {
+		}); err != nil {
 			t.Errorf("api-aggregator setup: %v", err)
 			return
 		}
@@ -219,6 +223,14 @@ func rest2kubeconfig(t *testing.T, container *kcp.Container, path string) []byte
 	raw, err := clientcmd.Write(kubeconfig)
 	require.NoError(t, err)
 	return raw
+}
+
+// testWriter routes controller-runtime logs into the test log.
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Log(string(p))
+	return len(p), nil
 }
 
 func freePort(t *testing.T) int {

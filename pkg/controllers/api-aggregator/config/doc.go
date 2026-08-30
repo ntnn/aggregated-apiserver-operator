@@ -1,2 +1,2 @@
-// Package config wires and starts one api-aggregator instance.
+// Package config wires one api-aggregator instance.
 package config

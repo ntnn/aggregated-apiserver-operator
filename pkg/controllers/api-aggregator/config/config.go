@@ -1,61 +1,55 @@
 package config
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"fmt"
 
-	"k8s.io/client-go/rest"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
+	"github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
+	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/aggregatedapi"
 )
 
 // Options configures one api-aggregator instance.
 type Options struct {
-	// AggregatedAPI is the name of the served AggregatedAPI object.
-	AggregatedAPI string
+	// Server is the aggregated API server the controllers drive.
+	Server *apiserver.Server
 
-	// HostConfig is the rest config for the host cluster.
-	HostConfig *rest.Config
-
-	// Hostname is the bind address.
-	Hostname string
-
-	// Port is the serving port.
-	Port int
-}
-
-func (o *Options) defaults() {
-	if o.Hostname == "" {
-		o.Hostname = "0.0.0.0"
-	}
-	if o.Port == 0 {
-		o.Port = 6443
-	}
+	// AggregatedAPI are the options of the AggregatedAPI controller.
+	AggregatedAPI aggregatedapi.Options
 }
 
 // RegisterFlags applies defaults and binds the flag-settable options to fs.
 func (o *Options) RegisterFlags(fs *flag.FlagSet) {
-	o.defaults()
-	fs.StringVar(&o.AggregatedAPI, "aggregated-api", o.AggregatedAPI, "name of the AggregatedAPI object to serve (required)")
-	fs.StringVar(&o.Hostname, "hostname", o.Hostname, "address to bind the aggregated API server to")
-	fs.IntVar(&o.Port, "port", o.Port, "port to serve the aggregated API on")
+	o.AggregatedAPI.RegisterFlags(fs)
 }
 
-func (o *Options) validate() error {
-	if o.AggregatedAPI == "" {
-		return errors.New("AggregatedAPI is required")
+// Setup registers the AggregatedAPI controller with mgr.
+func Setup(mgr manager.Manager, opts Options) error {
+	controllerOpts := opts.AggregatedAPI
+	controllerOpts.Client = mgr.GetClient()
+	controllerOpts.Server = opts.Server
+	controller, err := aggregatedapi.NewController(controllerOpts)
+	if err != nil {
+		return fmt.Errorf("building aggregatedapi controller: %w", err)
 	}
-	if o.HostConfig == nil {
-		return errors.New("HostConfig is required")
+	if err := controller.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setting up aggregatedapi controller: %w", err)
 	}
 	return nil
 }
 
-// Run serves the configured AggregatedAPI until ctx is done.
-func Run(ctx context.Context, opts Options) error {
-	opts.defaults()
-	if err := opts.validate(); err != nil {
-		return fmt.Errorf("invalid api-aggregator options: %w", err)
+// Scheme returns the scheme the manager needs for this package's controllers.
+func Scheme() (*runtime.Scheme, error) {
+	scheme := runtime.NewScheme()
+	if err := v1alpha1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("registering aggregation types: %w", err)
 	}
-	return errors.New("not implemented")
+	if err := corev1.AddToScheme(scheme); err != nil {
+		return nil, fmt.Errorf("registering core types: %w", err)
+	}
+	return scheme, nil
 }
