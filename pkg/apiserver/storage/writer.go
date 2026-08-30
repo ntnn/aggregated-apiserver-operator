@@ -25,12 +25,24 @@ var (
 	_ rest.CollectionDeleter = &Storage{}
 )
 
-// Create routes to the cluster named by the cluster annotation.
-// If only one cluster serves the API the annotation is optional.
-func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
+func (s *Storage) asUnstructured(obj runtime.Object) (*unstructured.Unstructured, error) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
 		return nil, apierrors.NewInternalError(fmt.Errorf("expected unstructured object, got %T", obj))
+	}
+	// apply the kind if it was cleared in between conversions
+	if u.GetKind() == "" {
+		u.SetGroupVersionKind(s.opts.Kind)
+	}
+	return u, nil
+}
+
+// Create routes to the cluster named by the cluster annotation.
+// If only one cluster serves the API the annotation is optional.
+func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
+	u, err := s.asUnstructured(obj)
+	if err != nil {
+		return nil, err
 	}
 
 	cluster := u.GetAnnotations()[v1alpha1.ClusterAnnotation]
@@ -92,9 +104,9 @@ func (s *Storage) Update(ctx context.Context, name string, objInfo rest.UpdatedO
 	if err != nil {
 		return nil, false, err
 	}
-	u, ok := obj.(*unstructured.Unstructured)
-	if !ok {
-		return nil, false, apierrors.NewInternalError(fmt.Errorf("expected unstructured object, got %T", obj))
+	u, err := s.asUnstructured(obj)
+	if err != nil {
+		return nil, false, err
 	}
 
 	if updateValidation != nil {
