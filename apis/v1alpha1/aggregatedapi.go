@@ -24,6 +24,10 @@ type AggregatedAPI struct {
 	Status AggregatedAPIStatus `json:"status,omitempty"`
 }
 
+// DefaultImage is the api-aggregator image used when the AggregatedAPI
+// does not set spec.image.
+const DefaultImage = "ghcr.io/ntnn/aggregated-apiserver-operator/api-aggregator:latest"
+
 // AggregatedAPISpec declares the clusters and APIs being aggregated.
 type AggregatedAPISpec struct {
 	// Image overrides the api-aggregator image serving this object.
