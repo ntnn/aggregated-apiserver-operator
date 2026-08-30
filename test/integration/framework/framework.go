@@ -3,11 +3,11 @@ package framework
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +56,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	require.NoError(t, err)
 	tc.CleanupContainer(t, container)
 
-	prefix := strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-")) + "-"
+	prefix := fmt.Sprintf("%x", sha256.Sum256([]byte(t.Name())))[:16] + "-"
 	operatorPath, err := container.CreateWorkspaceGenerateName(t.Context(), "root", prefix)
 	require.NoError(t, err)
 
