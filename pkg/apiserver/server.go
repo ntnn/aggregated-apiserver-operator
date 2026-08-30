@@ -123,6 +123,19 @@ func (s *Server) SetCluster(name string, client dynamic.Interface, resources []S
 	return s.rebuild()
 }
 
+// Clusters returns the names of the registered member clusters.
+func (s *Server) Clusters() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	names := make([]string, 0, len(s.clusters))
+	for name := range s.clusters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // RemoveCluster removes a member cluster and its served resources.
 func (s *Server) RemoveCluster(name string) error {
 	s.mu.Lock()
