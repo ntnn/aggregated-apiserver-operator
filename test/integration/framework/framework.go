@@ -104,6 +104,11 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 
 	aggregatorConfig := &rest.Config{
 		Host: fmt.Sprintf("https://127.0.0.1:%d", port),
+		// aggregator serves unstructured JSON only, no protobuf
+		ContentConfig: rest.ContentConfig{
+			ContentType:        "application/json",
+			AcceptContentTypes: "application/json",
+		},
 		TLSClientConfig: rest.TLSClientConfig{
 			Insecure: true,
 		},
