@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apiserver/pkg/authorization/authorizerfactory"
 	"k8s.io/apiserver/pkg/endpoints/openapi"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
@@ -21,6 +22,9 @@ import (
 func newGenericServer(hostname string, port int, resources []ServedResource, clusters map[string]dynamic.Interface, done <-chan struct{}) (*genericapiserver.GenericAPIServer, error) {
 	config := genericapiserver.NewConfig(newServerScheme())
 	config.EffectiveVersion = basecompatibility.NewEffectiveVersionFromString("1.0", "", "")
+
+	// TODO(ntnn): no authn yet, so authorization is allow-all
+	config.Authorization.Authorizer = authorizerfactory.NewAlwaysAllowAuthorizer()
 
 	// configure openapi v2 and v3
 	config.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(
