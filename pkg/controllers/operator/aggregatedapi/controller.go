@@ -4,13 +4,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
@@ -24,6 +27,12 @@ const FieldOwner = "aggregatedapi-operator"
 
 // Options configures the controller.
 type Options struct {
+	// Namespace is where the child workloads run.
+	Namespace string
+
+	// ServiceAccount is the ServiceAccount the child workloads run as.
+	ServiceAccount string
+
 	// GetAggregatedAPI fetches the reconciled object.
 	// Defaults to the manager's client in SetupWithManager.
 	GetAggregatedAPI func(ctx context.Context, key client.ObjectKey) (*v1alpha1.AggregatedAPI, error)
@@ -31,12 +40,34 @@ type Options struct {
 	// Apply server-side applies a desired child object.
 	// Defaults to the manager's client in SetupWithManager.
 	Apply func(ctx context.Context, obj client.Object) error
+
+	// Update updates an object (finalizer handling).
+	// Defaults to the manager's client in SetupWithManager.
+	Update func(ctx context.Context, obj client.Object) error
+
+	// Delete deletes a child object.
+	// Defaults to the manager's client in SetupWithManager.
+	Delete func(ctx context.Context, obj client.Object) error
 }
 
 // RegisterFlags binds the flag-settable options to fs.
-func (o *Options) RegisterFlags(fs *flag.FlagSet) {}
+func (o *Options) RegisterFlags(fs *flag.FlagSet) {
+	o.defaults()
+	fs.StringVar(&o.Namespace, "namespace", o.Namespace, "namespace the child api-aggregator workloads run in")
+	fs.StringVar(&o.ServiceAccount, "service-account", o.ServiceAccount, "ServiceAccount the child api-aggregator workloads run as")
+}
+
+func (o *Options) defaults() {
+	if o.Namespace == "" {
+		o.Namespace = "aggregated-apiserver-operator"
+	}
+	if o.ServiceAccount == "" {
+		o.ServiceAccount = "api-aggregator"
+	}
+}
 
 func (o *Options) validate() error {
+	o.defaults()
 	return nil
 }
 
@@ -53,9 +84,9 @@ func NewController(opts Options) (*Controller, error) {
 	return &Controller{opts: opts}, nil
 }
 
-// +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis,verbs=get;list;watch;update
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch;delete
 
 // SetupWithManager wires the controller and defaults the client seams.
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
@@ -63,7 +94,7 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 		c.opts.GetAggregatedAPI = func(ctx context.Context, key client.ObjectKey) (*v1alpha1.AggregatedAPI, error) {
 			aggregatedAPI := &v1alpha1.AggregatedAPI{}
 			if err := mgr.GetClient().Get(ctx, key, aggregatedAPI); err != nil {
-				return nil, err //nolint:wrapcheck // callers match apierrors
+				return nil, err
 			}
 			return aggregatedAPI, nil
 		}
@@ -79,13 +110,44 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 			return mgr.GetClient().Apply(ctx, apply, client.FieldOwner(FieldOwner), client.ForceOwnership)
 		}
 	}
+	if c.opts.Update == nil {
+		c.opts.Update = func(ctx context.Context, obj client.Object) error {
+			return mgr.GetClient().Update(ctx, obj)
+		}
+	}
+	if c.opts.Delete == nil {
+		c.opts.Delete = func(ctx context.Context, obj client.Object) error {
+			return mgr.GetClient().Delete(ctx, obj)
+		}
+	}
+
+	// children carry no owner references (they live in the operator's
+	// namespace, cross-namespace refs are invalid); map them back via the
+	// instance label <namespace>.<name>
+	toAggregatedAPI := handler.EnqueueRequestsFromMapFunc(
+		func(_ context.Context, obj client.Object) []ctrl.Request {
+			instance := obj.GetLabels()["app.kubernetes.io/instance"]
+			namespace, name, found := strings.Cut(instance, ".")
+			if !found {
+				return nil
+			}
+			return []ctrl.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Namespace: namespace,
+						Name:      name,
+					},
+				},
+			}
+		},
+	)
 
 	//nolint:wrapcheck // setup error passes through
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(ControllerName).
 		For(&v1alpha1.AggregatedAPI{}).
-		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
+		Watches(&appsv1.Deployment{}, toAggregatedAPI).
+		Watches(&corev1.Service{}, toAggregatedAPI).
 		Complete(c)
 }
 

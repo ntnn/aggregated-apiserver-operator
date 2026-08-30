@@ -11,9 +11,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
 )
+
+// Finalizer marks AggregatedAPIs with child workloads to clean up.
+const Finalizer = "aggregation.ntnn.dev/child-workloads"
 
 // reconciler holds the state of a single reconcile pass.
 type reconciler struct {
@@ -34,6 +38,16 @@ func (r *reconciler) reconcile(ctx context.Context) (ctrl.Result, error) {
 	}
 	r.aggregatedAPI = aggregatedAPI
 
+	if !aggregatedAPI.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalize(ctx)
+	}
+
+	if controllerutil.AddFinalizer(aggregatedAPI, Finalizer) {
+		if err := r.opts.Update(ctx, aggregatedAPI); err != nil {
+			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
+		}
+	}
+
 	if err := r.opts.Apply(ctx, r.deployment()); err != nil {
 		return ctrl.Result{}, fmt.Errorf("applying Deployment: %w", err)
 	}
@@ -43,24 +57,36 @@ func (r *reconciler) reconcile(ctx context.Context) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
-// childName is the name of the child Deployment and Service.
+// finalize deletes the child workloads and releases the finalizer.
+func (r *reconciler) finalize(ctx context.Context) error {
+	if !controllerutil.ContainsFinalizer(r.aggregatedAPI, Finalizer) {
+		return nil
+	}
+	if err := r.opts.Delete(ctx, r.deployment()); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting Deployment: %w", err)
+	}
+	if err := r.opts.Delete(ctx, r.service()); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting Service: %w", err)
+	}
+	controllerutil.RemoveFinalizer(r.aggregatedAPI, Finalizer)
+	if err := r.opts.Update(ctx, r.aggregatedAPI); err != nil {
+		return fmt.Errorf("removing finalizer: %w", err)
+	}
+	return nil
+}
+
+// childName is the name of the child Deployment and Service. It carries
+// the AggregatedAPI's namespace: all children share one namespace.
 func (r *reconciler) childName() string {
-	return "aggregator-" + r.aggregatedAPI.Name
+	return "aggregator-" + r.aggregatedAPI.Namespace + "-" + r.aggregatedAPI.Name
 }
 
 func (r *reconciler) labels() map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":       "api-aggregator",
-		"app.kubernetes.io/instance":   r.aggregatedAPI.Name,
+		"app.kubernetes.io/instance":   r.aggregatedAPI.Namespace + "." + r.aggregatedAPI.Name,
 		"app.kubernetes.io/managed-by": FieldOwner,
 	}
-}
-
-func (r *reconciler) ownerReference() metav1.OwnerReference {
-	return *metav1.NewControllerRef(
-		r.aggregatedAPI,
-		v1alpha1.GroupVersion.WithKind("AggregatedAPI"),
-	)
 }
 
 func (r *reconciler) image() string {
@@ -78,16 +104,16 @@ func (r *reconciler) deployment() *appsv1.Deployment {
 			Kind:       "Deployment",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:            r.childName(),
-			Namespace:       r.aggregatedAPI.Namespace,
-			Labels:          labels,
-			OwnerReferences: []metav1.OwnerReference{r.ownerReference()},
+			Name:      r.childName(),
+			Namespace: r.opts.Namespace,
+			Labels:    labels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: r.opts.ServiceAccount,
 					Containers: []corev1.Container{
 						{
 							Name:  "api-aggregator",
@@ -115,11 +141,8 @@ func (r *reconciler) service() *corev1.Service {
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      r.childName(),
-			Namespace: r.aggregatedAPI.Namespace,
+			Namespace: r.opts.Namespace,
 			Labels:    r.labels(),
-			OwnerReferences: []metav1.OwnerReference{
-				r.ownerReference(),
-			},
 		},
 		Spec: corev1.ServiceSpec{
 			Selector: r.labels(),
