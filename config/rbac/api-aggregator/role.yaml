@@ -1,0 +1,28 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: api-aggregator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - aggregation.ntnn.dev
+  resources:
+  - aggregatedapis
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - aggregation.ntnn.dev
+  resources:
+  - aggregatedapis/status
+  verbs:
+  - patch
