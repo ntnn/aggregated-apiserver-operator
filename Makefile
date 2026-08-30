@@ -2,6 +2,11 @@ GO ?= go
 TOOLS_DIR = hack/tools
 MODULES = . ./apis
 
+IMAGE_REGISTRY ?= ghcr.io/ntnn/aggregated-apiserver-operator
+IMAGE_TAG ?= latest
+IMAGE_PLATFORMS ?= linux/amd64,linux/arm64
+COMMANDS = api-aggregator operator
+
 GOLANGCI_LINT_VER := 2.13.2
 GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VER)
 
@@ -14,7 +19,24 @@ build:
 		echo "build $$mod"; \
 		(cd $$mod && $(GO) build ./...) || exit 1; \
 	done
-	$(GO) build -o bin/api-aggregator ./cmd/api-aggregator
+	@for cmd in $(COMMANDS); do \
+		echo "build bin/$$cmd"; \
+		$(GO) build -o bin/$$cmd ./cmd/$$cmd || exit 1; \
+	done
+
+.PHONY: images
+images:
+	@for cmd in $(COMMANDS); do \
+		echo "image $(IMAGE_REGISTRY)/$$cmd:$(IMAGE_TAG)"; \
+		docker buildx build -f cmd/$$cmd/Dockerfile -t $(IMAGE_REGISTRY)/$$cmd:$(IMAGE_TAG) --load . || exit 1; \
+	done
+
+.PHONY: images-push
+images-push:
+	@for cmd in $(COMMANDS); do \
+		echo "push $(IMAGE_REGISTRY)/$$cmd:$(IMAGE_TAG) [$(IMAGE_PLATFORMS)]"; \
+		docker buildx build -f cmd/$$cmd/Dockerfile -t $(IMAGE_REGISTRY)/$$cmd:$(IMAGE_TAG) --platform $(IMAGE_PLATFORMS) --push . || exit 1; \
+	done
 
 .PHONY: test
 test:

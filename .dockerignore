@@ -1,0 +1,8 @@
+.git
+.github
+*.md
+bin/
+hack/tools/
+examples/
+test/
+cmd/*/Dockerfile
