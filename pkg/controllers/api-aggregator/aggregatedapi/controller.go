@@ -38,6 +38,10 @@ type Options struct {
 	// Server is the aggregated API server clusters are registered on.
 	Server *apiserver.Server
 
+	// URL is the externally reachable endpoint of the aggregated API.
+	// Defaults to the server's own listen URL.
+	URL string
+
 	// DiscoveryClient builds a cluster's discovery client.
 	// Defaults to [discovery.NewDiscoveryClientForConfig].
 	DiscoveryClient func(config *rest.Config) (discovery.DiscoveryInterface, error)
@@ -52,6 +56,7 @@ func (o *Options) RegisterFlags(fs *flag.FlagSet) {
 	o.defaults()
 	fs.StringVar(&o.AggregatedAPI, "aggregated-api", o.AggregatedAPI, "name of the AggregatedAPI object to serve (required)")
 	fs.StringVar(&o.Namespace, "namespace", o.Namespace, "namespace of the AggregatedAPI object")
+	fs.StringVar(&o.URL, "url", o.URL, "externally reachable endpoint of the aggregated API (default: the listen URL)")
 }
 
 func (o *Options) defaults() {
@@ -99,7 +104,7 @@ func NewController(opts Options) (*Controller, error) {
 
 // +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis,verbs=get;list;watch
 // +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis/status,verbs=patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
 
 // SetupWithManager wires the controller.
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {

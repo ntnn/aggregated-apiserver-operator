@@ -79,7 +79,11 @@ func (r *reconciler) run(ctx context.Context) error {
 	} else {
 		r.setConditionReady(true, "ClustersRegistered", "all clusters registered")
 	}
-	r.aggregatedAPI.Status.URL = r.opts.Server.URL()
+	r.aggregatedAPI.Status.URL = r.url()
+
+	if secretErr := r.applyKubeconfigSecret(ctx); secretErr != nil {
+		err = errors.Join(err, fmt.Errorf("applying kubeconfig Secret: %w", secretErr))
+	}
 	return err
 }
 

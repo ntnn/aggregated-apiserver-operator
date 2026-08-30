@@ -121,6 +121,7 @@ func (r *reconciler) deployment() *appsv1.Deployment {
 							Args: []string{
 								"--aggregated-api", r.aggregatedAPI.Name,
 								"--namespace", r.aggregatedAPI.Namespace,
+								"--url", fmt.Sprintf("https://%s.%s.svc:443", r.childName(), r.opts.Namespace),
 							},
 							Ports: []corev1.ContainerPort{
 								{Name: "https", ContainerPort: 6443},
