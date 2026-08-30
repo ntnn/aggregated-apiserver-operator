@@ -17,7 +17,7 @@ import (
 )
 
 // newGenericServer builds a new [genericapiserver.GenericAPIServer] for the given resources and clusters.
-func newGenericServer(hostname string, port int, resources []ServedResource, clusters map[string]dynamic.Interface) (*genericapiserver.GenericAPIServer, error) {
+func newGenericServer(hostname string, port int, resources []ServedResource, clusters map[string]dynamic.Interface, done <-chan struct{}) (*genericapiserver.GenericAPIServer, error) {
 	config := genericapiserver.NewConfig(newServerScheme())
 	config.EffectiveVersion = basecompatibility.NewEffectiveVersionFromString("1.0", "", "")
 	config.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(unstructuredOpenAPIDefinitions, openapi.NewDefinitionNamer(runtime.NewScheme()))
@@ -30,13 +30,13 @@ func newGenericServer(hostname string, port int, resources []ServedResource, clu
 	if err != nil {
 		return nil, fmt.Errorf("building generic apiserver: %w", err)
 	}
-	if err := installResources(server, resources, clusters); err != nil {
+	if err := installResources(server, resources, clusters, done); err != nil {
 		return nil, err
 	}
 	return server, nil
 }
 
-func installResources(server *genericapiserver.GenericAPIServer, resources []ServedResource, clusters map[string]dynamic.Interface) error {
+func installResources(server *genericapiserver.GenericAPIServer, resources []ServedResource, clusters map[string]dynamic.Interface, done <-chan struct{}) error {
 	scheme, codecs := newScheme(resources)
 	parameterCodec := runtime.NewParameterCodec(scheme)
 
@@ -62,6 +62,7 @@ func installResources(server *genericapiserver.GenericAPIServer, resources []Ser
 				Namespaced: resource.Namespaced,
 				Singular:   resource.Singular,
 				Clusters:   resourceClusters,
+				Done:       done,
 			})
 			if err != nil {
 				return fmt.Errorf("building storage for %s: %w", resource.GVR, err)

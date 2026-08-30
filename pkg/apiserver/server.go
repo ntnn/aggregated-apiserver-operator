@@ -60,10 +60,11 @@ type Server struct {
 	handler atomic.Pointer[http.Handler]
 
 	// mu guards clusters, byCluster and the inner rebuild sequence.
-	mu        sync.Mutex
-	clusters  map[string]dynamic.Interface
-	byCluster map[string][]ServedResource
-	resources []ServedResource
+	mu          sync.Mutex
+	clusters    map[string]dynamic.Interface
+	byCluster   map[string][]ServedResource
+	resources   []ServedResource
+	stopWatches context.CancelFunc
 }
 
 // New builds a Server; it serves 404 until the first SetCluster.
@@ -155,20 +156,32 @@ func (s *Server) rebuild() error {
 	}
 
 	if len(resources) == 0 {
-		s.storeHandler(http.NotFoundHandler())
+		s.swapHandler(http.NotFoundHandler(), nil)
 		s.resources = nil
 		return nil
 	}
 
 	clusters := maps.Clone(s.clusters)
-	inner, err := newGenericServer(s.opts.Hostname, s.opts.Port, resources, clusters)
+	ctx, stopWatches := context.WithCancel(context.Background())
+	inner, err := newGenericServer(s.opts.Hostname, s.opts.Port, resources, clusters, ctx.Done())
 	if err != nil {
+		stopWatches()
 		return err
 	}
 
-	s.storeHandler(inner.PrepareRun().Handler)
+	s.swapHandler(inner.PrepareRun().Handler, stopWatches)
 	s.resources = resources
 	return nil
+}
+
+// swapHandler installs handler and kills the previous watches.
+// Callers hold s.mu.
+func (s *Server) swapHandler(handler http.Handler, stopWatches context.CancelFunc) {
+	s.storeHandler(handler)
+	if s.stopWatches != nil {
+		s.stopWatches()
+	}
+	s.stopWatches = stopWatches
 }
 
 // ServeHTTP delegates to the current inner handler.
