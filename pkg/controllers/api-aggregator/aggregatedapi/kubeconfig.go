@@ -85,5 +85,6 @@ func (r *reconciler) applyKubeconfigSecret(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("applying Secret: %w", err)
 	}
+	r.aggregatedAPI.Status.KubeconfigSecret = kubeconfigSecretName(r.aggregatedAPI.Name)
 	return nil
 }

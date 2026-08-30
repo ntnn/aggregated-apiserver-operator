@@ -138,6 +138,11 @@ func TestReconciler_reconcile(t *testing.T) {
 		assert.Equal(t, "ClustersRegistered", cond.Reason)
 		assert.Equal(t, int64(3), cond.ObservedGeneration)
 		assert.Equal(t, r.opts.Server.URL(), updated.Status.URL)
+		assert.Equal(t, "test-kubeconfig", updated.Status.KubeconfigSecret)
+
+		kubeconfigSecret := &corev1.Secret{}
+		require.NoError(t, r.opts.Client.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "test-kubeconfig"}, kubeconfigSecret))
+		assert.Contains(t, string(kubeconfigSecret.Data["kubeconfig"]), r.opts.Server.URL(), "the kubeconfig must point at the endpoint")
 	})
 
 	t.Run("removes clusters that left the spec", func(t *testing.T) {
