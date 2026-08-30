@@ -73,6 +73,8 @@ lint-fix: lint
 generate:
 	cd apis && $(GO) tool controller-gen object paths=./...
 	cd apis && $(GO) tool controller-gen crd paths=./... output:crd:dir=../config/crd
+	$(GO) tool controller-gen rbac:roleName=aggregated-apiserver-operator paths=./pkg/controllers/operator/... output:rbac:dir=config/rbac/operator
+	$(GO) tool controller-gen rbac:roleName=api-aggregator paths=./pkg/controllers/api-aggregator/... output:rbac:dir=config/rbac/api-aggregator
 
 $(GOLANGCI_LINT):
 	mkdir -p $(TOOLS_DIR)
