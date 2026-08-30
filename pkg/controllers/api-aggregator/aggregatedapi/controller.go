@@ -97,6 +97,10 @@ func NewController(opts Options) (*Controller, error) {
 	return &Controller{opts: opts}, nil
 }
 
+// +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis,verbs=get;list;watch
+// +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis/status,verbs=patch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+
 // SetupWithManager wires the controller.
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 	toAggregatedAPI := handler.EnqueueRequestsFromMapFunc(

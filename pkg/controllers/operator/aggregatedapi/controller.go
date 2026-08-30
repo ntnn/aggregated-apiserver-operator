@@ -53,6 +53,10 @@ func NewController(opts Options) (*Controller, error) {
 	return &Controller{opts: opts}, nil
 }
 
+// +kubebuilder:rbac:groups=aggregation.ntnn.dev,resources=aggregatedapis,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch
+
 // SetupWithManager wires the controller and defaults the client seams.
 func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 	if c.opts.GetAggregatedAPI == nil {
