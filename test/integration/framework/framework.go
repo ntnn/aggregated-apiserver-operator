@@ -24,6 +24,7 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -44,7 +45,7 @@ type Harness struct {
 	Kcp        *kcp.Container
 	Operator   client.Client
 	Members    map[string]client.Client
-	Aggregator client.Client
+	Aggregator client.WithWatch
 }
 
 // New creates a new Harness with a kcp workspace as the control plane
@@ -98,8 +99,10 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 
 	ctrllog.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(testWriter{t})))
 
+	tr := true
 	mgr, err := ctrl.NewManager(hostConfig, manager.Options{
-		Metrics: metricsserver.Options{BindAddress: "0"},
+		Metrics:    metricsserver.Options{BindAddress: "0"},
+		Controller: ctrlconfig.Controller{SkipNameValidation: &tr},
 	})
 	require.NoError(t, err)
 
@@ -143,7 +146,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 			Insecure: true,
 		},
 	}
-	aggregator, err := client.New(aggregatorConfig, client.Options{})
+	aggregator, err := client.NewWithWatch(aggregatorConfig, client.Options{})
 	require.NoError(t, err)
 	h.Aggregator = aggregator
 
