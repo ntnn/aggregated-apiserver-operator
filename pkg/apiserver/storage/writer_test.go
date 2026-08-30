@@ -52,13 +52,28 @@ func TestStorage_Create(t *testing.T) {
 		assert.True(t, apierrors.IsNotFound(err), "create must land on the target cluster only")
 	})
 
-	t.Run("missing annotation is a bad request", func(t *testing.T) {
+	t.Run("missing annotation is a bad request when multiple clusters serve the GVR", func(t *testing.T) {
+		t.Parallel()
+
+		storage := newTestStorage(t, map[string][]runtime.Object{
+			"east": {},
+			"west": {},
+		})
+
+		_, err := storage.Create(testContext("default"), deployment("default", "web"), nil, &metav1.CreateOptions{})
+		assert.True(t, apierrors.IsBadRequest(err), "expected BadRequest, got %v", err)
+	})
+
+	t.Run("missing annotation routes to the only serving cluster", func(t *testing.T) {
 		t.Parallel()
 
 		storage := newTestStorage(t, map[string][]runtime.Object{"east": {}})
 
-		_, err := storage.Create(testContext("default"), deployment("default", "web"), nil, &metav1.CreateOptions{})
-		assert.True(t, apierrors.IsBadRequest(err), "expected BadRequest, got %v", err)
+		created, err := storage.Create(testContext("default"), deployment("default", "web"), nil, &metav1.CreateOptions{})
+		require.NoError(t, err)
+
+		got := created.(*unstructured.Unstructured)
+		assert.Equal(t, "east", got.GetAnnotations()[v1alpha1.ClusterAnnotation], "the single serving cluster is the implicit target")
 	})
 
 	t.Run("unknown cluster is a bad request", func(t *testing.T) {

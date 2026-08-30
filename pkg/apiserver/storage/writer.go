@@ -26,6 +26,7 @@ var (
 )
 
 // Create routes to the cluster named by the cluster annotation.
+// If only one cluster serves the API the annotation is optional.
 func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, options *metav1.CreateOptions) (runtime.Object, error) {
 	u, ok := obj.(*unstructured.Unstructured)
 	if !ok {
@@ -34,7 +35,13 @@ func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidati
 
 	cluster := u.GetAnnotations()[v1alpha1.ClusterAnnotation]
 	if cluster == "" {
-		return nil, apierrors.NewBadRequest(fmt.Sprintf("create requires the %s annotation naming the target cluster", v1alpha1.ClusterAnnotation))
+		if len(s.opts.Clusters) != 1 {
+			return nil, apierrors.NewBadRequest(fmt.Sprintf("create requires the %s annotation naming the target cluster", v1alpha1.ClusterAnnotation))
+		}
+		// unambiguous: the single serving cluster is the implicit target
+		for name := range s.opts.Clusters {
+			cluster = name
+		}
 	}
 	client, ok := s.opts.Clusters[cluster]
 	if !ok {
