@@ -20,8 +20,30 @@ import (
 func newGenericServer(hostname string, port int, resources []ServedResource, clusters map[string]dynamic.Interface, done <-chan struct{}) (*genericapiserver.GenericAPIServer, error) {
 	config := genericapiserver.NewConfig(newServerScheme())
 	config.EffectiveVersion = basecompatibility.NewEffectiveVersionFromString("1.0", "", "")
-	config.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(unstructuredOpenAPIDefinitions, openapi.NewDefinitionNamer(runtime.NewScheme()))
-	config.SkipOpenAPIInstallation = true
+
+	// configure openapi v2 and v3
+	config.OpenAPIV3Config = genericapiserver.DefaultOpenAPIV3Config(
+		unstructuredOpenAPIDefinitions,
+		openapi.NewDefinitionNamer(runtime.NewScheme()),
+	)
+	config.OpenAPIV3Config.Info.Title = "api-aggregator"
+	config.OpenAPIConfig = genericapiserver.DefaultOpenAPIConfig(
+		unstructuredOpenAPIDefinitions,
+		openapi.NewDefinitionNamer(runtime.NewScheme()),
+	)
+	config.OpenAPIConfig.Info.Title = "api-aggregator"
+
+	// The apiserver serves everything as unstructured, which breaks the
+	// default namer because it assumed that unstructured means a CRD is
+	// being served and rejects unstructured for APIs with an empty
+	// group (so core APIs).
+	// Instead a custom namer is used that returns the
+	// x-kubernetes-group-version-kind extension, which then skips the
+	// entire breaking branch.
+	namer := &unstructuredNamer{resources: resources}
+	config.OpenAPIV3Config.GetDefinitionName = namer.GetDefinitionName
+	config.OpenAPIConfig.GetDefinitionName = namer.GetDefinitionName
+
 	config.ExternalAddress = net.JoinHostPort(hostname, strconv.Itoa(port))
 	// never used: no post-start hooks dial back, but New() requires it
 	config.LoopbackClientConfig = &restclient.Config{Host: "https://" + config.ExternalAddress}

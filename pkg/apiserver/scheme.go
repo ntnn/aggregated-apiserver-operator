@@ -3,6 +3,7 @@ package apiserver
 import (
 	"encoding/json"
 
+	generatedopenapi "k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,8 +73,30 @@ func (d defaultingDecoder) Decode(data []byte, defaults *schema.GroupVersionKind
 	return d.delegate.Decode(data, defaults, into)
 }
 
-// unstructuredOpenAPIDefinitions serves free-form objects
-func unstructuredOpenAPIDefinitions(_ openapicommon.ReferenceCallback) map[string]openapicommon.OpenAPIDefinition {
+type unstructuredNamer struct {
+	resources []ServedResource
+}
+
+func (n *unstructuredNamer) GetDefinitionName(name string) (string, spec.Extensions) {
+	if name != "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.Unstructured" {
+		return name, nil
+	}
+	gvks := make([]any, 0, len(n.resources))
+	for _, resource := range n.resources {
+		gvks = append(gvks, map[string]any{
+			"group":   resource.Kind.Group,
+			"version": resource.Kind.Version,
+			"kind":    resource.Kind.Kind,
+		})
+	}
+	return name, spec.Extensions{"x-kubernetes-group-version-kind": gvks}
+}
+
+// unstructuredOpenAPIDefinitions merges the generated meta-type
+// definitions from upstream with the actually served unstructured
+// types.
+func unstructuredOpenAPIDefinitions(ref openapicommon.ReferenceCallback) map[string]openapicommon.OpenAPIDefinition {
+	definitions := generatedopenapi.GetOpenAPIDefinitions(ref)
 	freeForm := openapicommon.OpenAPIDefinition{
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -84,8 +107,7 @@ func unstructuredOpenAPIDefinitions(_ openapicommon.ReferenceCallback) map[strin
 			},
 		},
 	}
-	return map[string]openapicommon.OpenAPIDefinition{
-		"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.Unstructured":     freeForm,
-		"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.UnstructuredList": freeForm,
-	}
+	definitions["k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.Unstructured"] = freeForm
+	definitions["k8s.io/apimachinery/pkg/apis/meta/v1/unstructured.UnstructuredList"] = freeForm
+	return definitions
 }
