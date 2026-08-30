@@ -108,7 +108,7 @@ func aggregatedAPI(clusters ...string) *v1alpha1.AggregatedAPI {
 		})
 	}
 	return &v1alpha1.AggregatedAPI{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Generation: 3},
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", Generation: 3},
 		Spec:       spec,
 	}
 }
@@ -217,5 +217,5 @@ func TestReconciler_reconcile(t *testing.T) {
 }
 
 func objectKey(name string) client.ObjectKey {
-	return client.ObjectKey{Name: name}
+	return client.ObjectKey{Namespace: "default", Name: name}
 }

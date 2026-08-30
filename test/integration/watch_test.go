@@ -145,7 +145,7 @@ func TestAggregatedWatch(t *testing.T) {
 		// drop member-b from the spec: reconciler removes it, the inner
 		// server is swapped and running watches must close
 		aggregatedAPI := &aggregationv1alpha1.AggregatedAPI{}
-		require.NoError(t, h.Operator.Get(t.Context(), client.ObjectKey{Name: "watch"}, aggregatedAPI))
+		require.NoError(t, h.Operator.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "watch"}, aggregatedAPI))
 		aggregatedAPI.Spec.Clusters = aggregatedAPI.Spec.Clusters[:1]
 		require.NoError(t, h.Operator.Update(t.Context(), aggregatedAPI))
 

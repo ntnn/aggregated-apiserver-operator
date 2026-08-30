@@ -28,11 +28,12 @@ type Options struct {
 	// AggregatedAPI is the name of the reconciled AggregatedAPI object.
 	AggregatedAPI string
 
+	// Namespace is the namespace of the AggregatedAPI object; the
+	// kubeconfig Secrets live in the same namespace.
+	Namespace string
+
 	// Client reads AggregatedAPI objects and Secrets from the host cluster.
 	Client client.Client
-
-	// Namespace is where the kubeconfig Secrets live.
-	Namespace string
 
 	// Server is the aggregated API server clusters are registered on.
 	Server *apiserver.Server
@@ -50,7 +51,7 @@ type Options struct {
 func (o *Options) RegisterFlags(fs *flag.FlagSet) {
 	o.defaults()
 	fs.StringVar(&o.AggregatedAPI, "aggregated-api", o.AggregatedAPI, "name of the AggregatedAPI object to serve (required)")
-	fs.StringVar(&o.Namespace, "namespace", o.Namespace, "namespace of the kubeconfig Secrets")
+	fs.StringVar(&o.Namespace, "namespace", o.Namespace, "namespace of the AggregatedAPI object")
 }
 
 func (o *Options) defaults() {
@@ -103,7 +104,8 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 			return []ctrl.Request{
 				{
 					NamespacedName: client.ObjectKey{
-						Name: c.opts.AggregatedAPI,
+						Namespace: c.opts.Namespace,
+						Name:      c.opts.AggregatedAPI,
 					},
 				},
 			}
@@ -119,7 +121,7 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 
 // Reconcile builds a reconciler for one pass.
 func (c *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	if req.Name != c.opts.AggregatedAPI {
+	if req.Name != c.opts.AggregatedAPI || req.Namespace != c.opts.Namespace {
 		return ctrl.Result{}, nil
 	}
 	r := &reconciler{

@@ -12,7 +12,7 @@ spec:
     listKind: AggregatedAPIList
     plural: aggregatedapis
     singular: aggregatedapi
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.url

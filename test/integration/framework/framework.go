@@ -92,6 +92,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 		require.NoError(t, operator.Create(t.Context(), secret))
 	}
 
+	aggregatedAPI.Namespace = "default"
 	require.NoError(t, operator.Create(t.Context(), aggregatedAPI))
 
 	hostConfig, err := container.RESTConfig(t.Context(), operatorPath)
@@ -122,6 +123,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 			Server: server,
 			AggregatedAPI: aggregatedapi.Options{
 				AggregatedAPI: aggregatedAPI.Name,
+				Namespace:     aggregatedAPI.Namespace,
 			},
 		}); err != nil {
 			t.Errorf("api-aggregator setup: %v", err)

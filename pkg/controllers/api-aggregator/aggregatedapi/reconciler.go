@@ -37,7 +37,11 @@ func (r *reconciler) reconcile(ctx context.Context) (ctrl.Result, error) {
 
 func (r *reconciler) fetchAggregatedAPI(ctx context.Context) (bool, error) {
 	aggregatedAPI := &v1alpha1.AggregatedAPI{}
-	if err := r.opts.Client.Get(ctx, types.NamespacedName{Name: r.opts.AggregatedAPI}, aggregatedAPI); err != nil {
+	key := types.NamespacedName{
+		Namespace: r.opts.Namespace,
+		Name:      r.opts.AggregatedAPI,
+	}
+	if err := r.opts.Client.Get(ctx, key, aggregatedAPI); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, nil
 		}
