@@ -1,6 +1,8 @@
 package apiserver
 
 import (
+	"encoding/json"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -33,7 +35,44 @@ func newServerScheme() serializer.CodecFactory {
 	return serializer.NewCodecFactory(scheme)
 }
 
-// unstructuredOpenAPIDefinitions serves free-form objects; SSA needs a definition per type.
+type defaultingNegotiatedSerializer struct {
+	serializer.CodecFactory
+}
+
+func (f defaultingNegotiatedSerializer) DecoderToVersion(decoder runtime.Decoder, gv runtime.GroupVersioner) runtime.Decoder {
+	return defaultingDecoder{f.CodecFactory.DecoderToVersion(decoder, gv)}
+}
+
+type defaultingDecoder struct {
+	delegate runtime.Decoder
+}
+
+func (d defaultingDecoder) Decode(data []byte, defaults *schema.GroupVersionKind, into runtime.Object) (runtime.Object, *schema.GroupVersionKind, error) {
+	obj, gvk, err := d.delegate.Decode(data, defaults, into)
+	if err == nil || defaults == nil || defaults.Empty() {
+		return obj, gvk, err
+	}
+	if !runtime.IsMissingKind(err) && !runtime.IsMissingVersion(err) {
+		return obj, gvk, err
+	}
+
+	patched := map[string]any{}
+	if err := json.Unmarshal(data, &patched); err != nil {
+		return obj, gvk, err
+	}
+	// default the gvk for requests that are missing them.
+	// gvk cannot be inferred because this apiserver works with
+	// unstructured to handle all APIs
+	patched["apiVersion"] = defaults.GroupVersion().String()
+	patched["kind"] = defaults.Kind
+	data, marshalErr := json.Marshal(patched)
+	if marshalErr != nil {
+		return obj, gvk, err
+	}
+	return d.delegate.Decode(data, defaults, into)
+}
+
+// unstructuredOpenAPIDefinitions serves free-form objects
 func unstructuredOpenAPIDefinitions(_ openapicommon.ReferenceCallback) map[string]openapicommon.OpenAPIDefinition {
 	freeForm := openapicommon.OpenAPIDefinition{
 		Schema: spec.Schema{

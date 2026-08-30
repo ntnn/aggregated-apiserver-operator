@@ -47,6 +47,12 @@ func installResources(server *genericapiserver.GenericAPIServer, resources []Ser
 
 	for group, groupResources := range byGroup {
 		info := genericapiserver.NewDefaultAPIGroupInfo(group, scheme, parameterCodec, codecs)
+
+		// install a serializer that defaults the apiversion and kind.
+		// since the aggregated API server works purely off of
+		// unstructured reflection cannot infer the correct gvk.
+		info.NegotiatedSerializer = defaultingNegotiatedSerializer{codecs}
+
 		for _, resource := range groupResources {
 			resourceClusters := make(map[string]dynamic.Interface, len(resource.Clusters))
 			for _, cluster := range resource.Clusters {
