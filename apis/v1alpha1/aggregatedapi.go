@@ -34,6 +34,11 @@ type AggregatedAPISpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
 
+	// ResyncInterval is how often the server updates discovery from the targeted clusters.
+	// Defaults to 30s.
+	// +optional
+	ResyncInterval *metav1.Duration `json:"resyncInterval,omitempty"`
+
 	// Clusters lists the clusters being aggregated.
 	// +required
 	Clusters []AggregatedCluster `json:"clusters"`
