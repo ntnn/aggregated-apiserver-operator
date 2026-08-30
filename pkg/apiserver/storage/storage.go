@@ -27,6 +27,10 @@ type Options struct {
 
 	// Clusters maps member cluster names to their dynamic clients.
 	Clusters map[string]dynamic.Interface
+
+	// Done ends all watches served by this storage when closed;
+	// membership changes swap the inner server and close it.
+	Done <-chan struct{}
 }
 
 func (o *Options) validate() error {
