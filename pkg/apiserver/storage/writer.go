@@ -67,6 +67,21 @@ func (s *Storage) Create(ctx context.Context, obj runtime.Object, createValidati
 // Update routes to the cluster owning the existing object.
 func (s *Storage) Update(ctx context.Context, name string, objInfo rest.UpdatedObjectInfo, createValidation rest.ValidateObjectFunc, updateValidation rest.ValidateObjectUpdateFunc, forceAllowCreate bool, options *metav1.UpdateOptions) (runtime.Object, bool, error) {
 	cluster, existing, err := s.locate(ctx, name, nil)
+	if apierrors.IsNotFound(err) && forceAllowCreate {
+		// the objects exists in no remote and forceAllowCreate/SSA is used
+		// pass the object to .Create
+		base := s.New()
+		obj, updatedErr := objInfo.UpdatedObject(ctx, base)
+		if updatedErr != nil {
+			return nil, false, updatedErr
+		}
+		created, createErr := s.Create(ctx, obj, createValidation, &metav1.CreateOptions{
+			DryRun:          options.DryRun,
+			FieldManager:    options.FieldManager,
+			FieldValidation: options.FieldValidation,
+		})
+		return created, createErr == nil, createErr
+	}
 	if err != nil {
 		return nil, false, err
 	}
