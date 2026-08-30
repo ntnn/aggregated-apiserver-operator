@@ -40,6 +40,22 @@ type defaultingNegotiatedSerializer struct {
 	serializer.CodecFactory
 }
 
+func (f defaultingNegotiatedSerializer) SupportedMediaTypes() []runtime.SerializerInfo {
+	infos := f.CodecFactory.SupportedMediaTypes()
+	for i, info := range infos {
+		if info.MediaType != runtime.ContentTypeProtobuf {
+			continue
+		}
+		// round trip through a custom protobuf serializer to enable clients that prefer protobuf.
+		// negotiation fails, fixed by https://github.com/kubernetes/kubernetes/pull/138582
+		proto := newProtoRoundTripSerializer()
+		infos[i].Serializer = proto
+		infos[i].StrictSerializer = proto
+		infos[i].StreamSerializer = newProtoRoundTripStreamSerializer()
+	}
+	return infos
+}
+
 func (f defaultingNegotiatedSerializer) DecoderToVersion(decoder runtime.Decoder, gv runtime.GroupVersioner) runtime.Decoder {
 	return defaultingDecoder{f.CodecFactory.DecoderToVersion(decoder, gv)}
 }
