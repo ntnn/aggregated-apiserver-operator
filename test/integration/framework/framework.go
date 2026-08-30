@@ -67,7 +67,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 		memberPath := operatorPath + ":" + member
 		require.NoError(t, container.CreateWorkspace(t.Context(), memberPath))
 
-		cl, err := container.Client(t.Context(), memberPath, client.Options{})
+		cl, err := container.Client(t.Context(), memberPath, client.Options{Scheme: newScheme(t)})
 		require.NoError(t, err)
 		h.Members[member] = cl
 
