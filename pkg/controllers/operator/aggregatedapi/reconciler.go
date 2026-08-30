@@ -96,6 +96,18 @@ func (r *reconciler) image() string {
 	return v1alpha1.DefaultImage
 }
 
+func (r *reconciler) childArgs() []string {
+	args := []string{
+		"--aggregated-api", r.aggregatedAPI.Name,
+		"--namespace", r.aggregatedAPI.Namespace,
+		"--url", fmt.Sprintf("https://%s.%s.svc:443", r.childName(), r.opts.Namespace),
+	}
+	if interval := r.aggregatedAPI.Spec.ResyncInterval; interval != nil {
+		args = append(args, "--resync-interval", interval.Duration.String())
+	}
+	return args
+}
+
 func (r *reconciler) deployment() *appsv1.Deployment {
 	labels := r.labels()
 	return &appsv1.Deployment{
@@ -118,11 +130,7 @@ func (r *reconciler) deployment() *appsv1.Deployment {
 						{
 							Name:  "api-aggregator",
 							Image: r.image(),
-							Args: []string{
-								"--aggregated-api", r.aggregatedAPI.Name,
-								"--namespace", r.aggregatedAPI.Namespace,
-								"--url", fmt.Sprintf("https://%s.%s.svc:443", r.childName(), r.opts.Namespace),
-							},
+							Args:  r.childArgs(),
 							Ports: []corev1.ContainerPort{
 								{Name: "https", ContainerPort: 6443},
 							},
