@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/endpoints/openapi"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
@@ -60,56 +61,43 @@ func newGenericServer(hostname string, port int, resources []ServedResource, clu
 
 func installResources(server *genericapiserver.GenericAPIServer, resources []ServedResource, clusters map[string]dynamic.Interface, done <-chan struct{}) error {
 	scheme, codecs := newScheme(resources)
-	parameterCodec := runtime.NewParameterCodec(scheme)
+	negotiated := defaultingNegotiatedSerializer{codecs}
 
-	byGroup := map[string][]ServedResource{}
+	byGroupVersion := map[schema.GroupVersion]map[string]rest.Storage{}
 	for _, resource := range resources {
-		byGroup[resource.GVR.Group] = append(byGroup[resource.GVR.Group], resource)
+		resourceClusters := make(map[string]dynamic.Interface, len(resource.Clusters))
+		for _, cluster := range resource.Clusters {
+			client, ok := clusters[cluster]
+			if !ok {
+				return fmt.Errorf("no client for cluster %q serving %s", cluster, resource.GVR)
+			}
+			resourceClusters[cluster] = client
+		}
+		store, err := storage.New(storage.Options{
+			GVR:        resource.GVR,
+			Kind:       resource.Kind,
+			Namespaced: resource.Namespaced,
+			Singular:   resource.Singular,
+			Clusters:   resourceClusters,
+			Done:       done,
+		})
+		if err != nil {
+			return fmt.Errorf("building storage for %s: %w", resource.GVR, err)
+		}
+		gv := resource.GVR.GroupVersion()
+		if byGroupVersion[gv] == nil {
+			byGroupVersion[gv] = map[string]rest.Storage{}
+		}
+		byGroupVersion[gv][resource.GVR.Resource] = store
 	}
 
-	for group, groupResources := range byGroup {
-		info := genericapiserver.NewDefaultAPIGroupInfo(group, scheme, parameterCodec, codecs)
-
-		// install a serializer that defaults the apiversion and kind.
-		// since the aggregated API server works purely off of
-		// unstructured reflection cannot infer the correct gvk.
-		info.NegotiatedSerializer = defaultingNegotiatedSerializer{codecs}
-
-		for _, resource := range groupResources {
-			resourceClusters := make(map[string]dynamic.Interface, len(resource.Clusters))
-			for _, cluster := range resource.Clusters {
-				client, ok := clusters[cluster]
-				if !ok {
-					return fmt.Errorf("no client for cluster %q serving %s", cluster, resource.GVR)
-				}
-				resourceClusters[cluster] = client
-			}
-			store, err := storage.New(storage.Options{
-				GVR:        resource.GVR,
-				Kind:       resource.Kind,
-				Namespaced: resource.Namespaced,
-				Singular:   resource.Singular,
-				Clusters:   resourceClusters,
-				Done:       done,
-			})
-			if err != nil {
-				return fmt.Errorf("building storage for %s: %w", resource.GVR, err)
-			}
-			version := resource.GVR.Version
-			if info.VersionedResourcesStorageMap[version] == nil {
-				info.VersionedResourcesStorageMap[version] = map[string]rest.Storage{}
-			}
-			info.VersionedResourcesStorageMap[version][resource.GVR.Resource] = store
+	for gv, storageMap := range byGroupVersion {
+		apiPrefix := genericapiserver.APIGroupPrefix
+		if gv.Group == "" {
+			apiPrefix = genericapiserver.DefaultLegacyAPIPrefix
 		}
-
-		if group == "" {
-			if err := server.InstallLegacyAPIGroup(genericapiserver.DefaultLegacyAPIPrefix, &info); err != nil {
-				return fmt.Errorf("installing legacy API group: %w", err)
-			}
-			continue
-		}
-		if err := server.InstallAPIGroup(&info); err != nil {
-			return fmt.Errorf("installing API group %q: %w", group, err)
+		if err := installGroupVersion(server, scheme, negotiated, gv, apiPrefix, storageMap); err != nil {
+			return err
 		}
 	}
 	return nil
