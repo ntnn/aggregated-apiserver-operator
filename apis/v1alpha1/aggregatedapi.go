@@ -79,6 +79,12 @@ type AggregatedAPIStatus struct {
 
 	// URL is the endpoint serving this aggregated API.
 	URL string `json:"url,omitempty"`
+
+	// KubeconfigSecret is the name of the secret containing the
+	// kubeconfig to access the aggregated API.
+	// It is in the same namespace as the AggregatedAPI.
+	// They kubeconfig is in the kubeconfig key.
+	KubeconfigSecret string `json:"kubeconfigSecret,omitempty"`
 }
 
 // +kubebuilder:object:root=true
