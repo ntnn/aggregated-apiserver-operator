@@ -4,13 +4,11 @@ import (
 	"flag"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/aggregatedapi"
+	_ "github.com/ntnn/aggregated-apiserver-operator/pkg/register"
 )
 
 // Options configures one api-aggregator instance.
@@ -40,16 +38,4 @@ func Setup(mgr manager.Manager, opts Options) error {
 		return fmt.Errorf("setting up aggregatedapi controller: %w", err)
 	}
 	return nil
-}
-
-// Scheme returns the scheme the manager needs for this package's controllers.
-func Scheme() (*runtime.Scheme, error) {
-	scheme := runtime.NewScheme()
-	if err := v1alpha1.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("registering aggregation types: %w", err)
-	}
-	if err := corev1.AddToScheme(scheme); err != nil {
-		return nil, fmt.Errorf("registering core types: %w", err)
-	}
-	return scheme, nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/config"
+	_ "github.com/ntnn/aggregated-apiserver-operator/pkg/register"
 )
 
 func main() {

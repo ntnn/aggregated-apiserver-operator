@@ -34,6 +34,7 @@ import (
 	apiserverpkg "github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/aggregatedapi"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/config"
+	_ "github.com/ntnn/aggregated-apiserver-operator/pkg/register"
 )
 
 const kcpImage = "ghcr.io/kcp-dev/kcp:latest"
@@ -59,7 +60,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	operatorPath, err := container.CreateWorkspaceGenerateName(t.Context(), "root", prefix)
 	require.NoError(t, err)
 
-	operator, err := container.Client(t.Context(), operatorPath, client.Options{Scheme: newScheme(t)})
+	operator, err := container.Client(t.Context(), operatorPath, client.Options{})
 	require.NoError(t, err)
 
 	installCRD(t, operator)
@@ -74,7 +75,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 		memberPath := operatorPath + ":" + member
 		require.NoError(t, container.CreateWorkspace(t.Context(), memberPath))
 
-		cl, err := container.Client(t.Context(), memberPath, client.Options{Scheme: newScheme(t)})
+		cl, err := container.Client(t.Context(), memberPath, client.Options{})
 		require.NoError(t, err)
 		h.Members[member] = cl
 
@@ -142,7 +143,7 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 			Insecure: true,
 		},
 	}
-	aggregator, err := client.New(aggregatorConfig, client.Options{Scheme: newScheme(t)})
+	aggregator, err := client.New(aggregatorConfig, client.Options{})
 	require.NoError(t, err)
 	h.Aggregator = aggregator
 
@@ -157,16 +158,6 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	)
 
 	return h
-}
-
-func newScheme(t *testing.T) *runtime.Scheme {
-	t.Helper()
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, apiextensionsv1.AddToScheme(scheme))
-	require.NoError(t, aggregationv1alpha1.AddToScheme(scheme))
-	return scheme
 }
 
 func installCRD(t *testing.T, cl client.Client) {
