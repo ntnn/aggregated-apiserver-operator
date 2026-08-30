@@ -14,6 +14,7 @@ import (
 	kcp "github.com/ntnn/kcp-testcontainer"
 	"github.com/stretchr/testify/require"
 	tc "github.com/testcontainers/testcontainers-go"
+	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,10 +23,15 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/yaml"
 
 	aggregationv1alpha1 "github.com/ntnn/aggregated-apiserver-operator/apis/v1alpha1"
+	apiserverpkg "github.com/ntnn/aggregated-apiserver-operator/pkg/apiserver"
+	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/aggregatedapi"
 	"github.com/ntnn/aggregated-apiserver-operator/pkg/controllers/api-aggregator/config"
 )
 
@@ -88,16 +94,35 @@ func New(t *testing.T, members []string, aggregatedAPI *aggregationv1alpha1.Aggr
 	hostConfig, err := container.RESTConfig(t.Context(), operatorPath)
 	require.NoError(t, err)
 
+	scheme, err := config.Scheme()
+	require.NoError(t, err)
+	mgr, err := ctrl.NewManager(hostConfig, manager.Options{
+		Scheme:  scheme,
+		Metrics: metricsserver.Options{BindAddress: "0"},
+	})
+	require.NoError(t, err)
+
 	port := freePort(t)
 	runCtx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	go func() {
-		if err := config.Run(runCtx, config.Options{
-			AggregatedAPI: aggregatedAPI.Name,
-			HostConfig:    hostConfig,
-			Hostname:      "127.0.0.1",
-			Port:          port,
-		}); err != nil && runCtx.Err() == nil {
+		server, err := config.Setup(mgr, config.Options{
+			Server: apiserverpkg.Options{
+				Hostname: "127.0.0.1",
+				Port:     port,
+			},
+			AggregatedAPI: aggregatedapi.Options{
+				AggregatedAPI: aggregatedAPI.Name,
+			},
+		})
+		if err != nil {
+			t.Errorf("api-aggregator setup: %v", err)
+			return
+		}
+		group, groupCtx := errgroup.WithContext(runCtx)
+		group.Go(func() error { return mgr.Start(groupCtx) })
+		group.Go(func() error { return server.Run(groupCtx) })
+		if err := group.Wait(); err != nil && runCtx.Err() == nil {
 			t.Errorf("api-aggregator exited: %v", err)
 		}
 	}()

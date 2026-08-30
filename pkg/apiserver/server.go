@@ -2,11 +2,13 @@ package apiserver
 
 import (
 	"context"
-	"errors"
+	"flag"
 	"fmt"
 	"maps"
 	"net"
 	"net/http"
+	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,20 +31,32 @@ type Options struct {
 	TLSKeyFile  string
 }
 
-func (o *Options) validate() error {
+func (o *Options) defaults() {
 	if o.Hostname == "" {
-		return errors.New("hostname is required")
+		o.Hostname = "0.0.0.0"
 	}
 	if o.Port == 0 {
-		return errors.New("port is required")
+		o.Port = 6443
 	}
-	return nil
+}
+
+// RegisterFlags applies defaults and binds the flag-settable options to fs.
+func (o *Options) RegisterFlags(fs *flag.FlagSet) {
+	o.defaults()
+	fs.StringVar(&o.Hostname, "hostname", o.Hostname, "address to bind the aggregated API server to")
+	fs.IntVar(&o.Port, "port", o.Port, "port to serve the aggregated API on")
+	fs.StringVar(&o.TLSCertFile, "tls-cert-file", o.TLSCertFile, "serving certificate, empty generates a self-signed pair")
+	fs.StringVar(&o.TLSKeyFile, "tls-key-file", o.TLSKeyFile, "serving key, empty generates a self-signed pair")
+}
+
+// URL returns the endpoint URL the server serves on.
+func (o *Options) URL() string {
+	return fmt.Sprintf("https://%s:%d", o.Hostname, o.Port)
 }
 
 // Server serves an aggregated API whose clusters and resources can change at runtime.
 type Server struct {
 	opts    Options
-	serving *genericapiserver.SecureServingInfo
 	handler atomic.Pointer[http.Handler]
 
 	// mu guards clusters, byCluster and the inner rebuild sequence.
@@ -52,30 +66,12 @@ type Server struct {
 	resources []ServedResource
 }
 
-// New builds a Server.
+// New builds a Server; it serves 404 until the first SetCluster.
 func New(opts Options) (*Server, error) {
-	if err := opts.validate(); err != nil {
-		return nil, fmt.Errorf("invalid apiserver options: %w", err)
-	}
-
-	secureServing := genericoptions.NewSecureServingOptions()
-	secureServing.BindAddress = net.ParseIP(opts.Hostname)
-	secureServing.BindPort = opts.Port
-	secureServing.ServerCert.CertKey.CertFile = opts.TLSCertFile
-	secureServing.ServerCert.CertKey.KeyFile = opts.TLSKeyFile
-	if opts.TLSCertFile == "" {
-		if err := secureServing.MaybeDefaultWithSelfSignedCerts(opts.Hostname, nil, nil); err != nil {
-			return nil, fmt.Errorf("generating self-signed serving certs: %w", err)
-		}
-	}
-	var serving *genericapiserver.SecureServingInfo
-	if err := secureServing.ApplyTo(&serving); err != nil {
-		return nil, fmt.Errorf("applying secure serving options: %w", err)
-	}
+	opts.defaults()
 
 	server := &Server{
 		opts:      opts,
-		serving:   serving,
 		clusters:  map[string]dynamic.Interface{},
 		byCluster: map[string][]ServedResource{},
 	}
@@ -83,8 +79,38 @@ func New(opts Options) (*Server, error) {
 	return server, nil
 }
 
+// listen builds the secure serving info, binding the listener.
+func (s *Server) listen() (*genericapiserver.SecureServingInfo, error) {
+	secureServing := genericoptions.NewSecureServingOptions()
+	secureServing.BindAddress = net.ParseIP(s.opts.Hostname)
+	secureServing.BindPort = s.opts.Port
+	secureServing.ServerCert.CertKey.CertFile = s.opts.TLSCertFile
+	secureServing.ServerCert.CertKey.KeyFile = s.opts.TLSKeyFile
+	if s.opts.TLSCertFile == "" {
+		// self-signed pair is throwaway; keep it out of the working directory
+		dir, err := os.MkdirTemp("", "api-aggregator-certs-")
+		if err != nil {
+			return nil, fmt.Errorf("creating cert directory: %w", err)
+		}
+		secureServing.ServerCert.CertDirectory = dir
+		if err := secureServing.MaybeDefaultWithSelfSignedCerts(s.opts.Hostname, nil, nil); err != nil {
+			return nil, fmt.Errorf("generating self-signed serving certs: %w", err)
+		}
+	}
+	var serving *genericapiserver.SecureServingInfo
+	if err := secureServing.ApplyTo(&serving); err != nil {
+		return nil, fmt.Errorf("applying secure serving options: %w", err)
+	}
+	return serving, nil
+}
+
 func (s *Server) storeHandler(handler http.Handler) {
 	s.handler.Store(&handler)
+}
+
+// URL returns the endpoint URL the server serves on.
+func (s *Server) URL() string {
+	return s.opts.URL()
 }
 
 // SetCluster adds or updates a member cluster and its served resources.
@@ -139,8 +165,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Run serves until ctx is done.
 func (s *Server) Run(ctx context.Context) error {
+	serving, err := s.listen()
+	if err != nil {
+		return err
+	}
 	stopCh := ctx.Done()
-	stoppedCh, listenerStoppedCh, err := s.serving.Serve(s, 10*time.Second, stopCh)
+	stoppedCh, listenerStoppedCh, err := serving.Serve(s, 10*time.Second, stopCh)
 	if err != nil {
 		return fmt.Errorf("serving: %w", err)
 	}

@@ -17,12 +17,8 @@ import (
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	server := &Server{
-		opts:      Options{Hostname: "127.0.0.1", Port: 6443},
-		clusters:  map[string]dynamic.Interface{},
-		byCluster: map[string][]ServedResource{},
-	}
-	server.storeHandler(http.NotFoundHandler())
+	server, err := New(Options{})
+	require.NoError(t, err)
 	return server
 }
 
