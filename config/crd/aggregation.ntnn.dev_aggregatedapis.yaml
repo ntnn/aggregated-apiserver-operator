@@ -164,6 +164,13 @@ spec:
                   - type
                   type: object
                 type: array
+              kubeconfigSecret:
+                description: |-
+                  KubeconfigSecret is the name of the secret containing the
+                  kubeconfig to access the aggregated API.
+                  It is in the same namespace as the AggregatedAPI.
+                  They kubeconfig is in the kubeconfig key.
+                type: string
               url:
                 description: URL is the endpoint serving this aggregated API.
                 type: string
