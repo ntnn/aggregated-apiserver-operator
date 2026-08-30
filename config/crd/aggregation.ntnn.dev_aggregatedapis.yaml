@@ -97,6 +97,10 @@ spec:
                   - apis
                   type: object
                 type: array
+              image:
+                description: Image overrides the api-aggregator image serving this
+                  object.
+                type: string
             required:
             - clusters
             type: object
