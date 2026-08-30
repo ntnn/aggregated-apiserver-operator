@@ -26,6 +26,10 @@ type AggregatedAPI struct {
 
 // AggregatedAPISpec declares the clusters and APIs being aggregated.
 type AggregatedAPISpec struct {
+	// Image overrides the api-aggregator image serving this object.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// Clusters lists the clusters being aggregated.
 	// +required
 	Clusters []AggregatedCluster `json:"clusters"`
