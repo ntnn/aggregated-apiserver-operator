@@ -10,7 +10,7 @@ tool (
 replace github.com/ntnn/aggregated-apiserver-operator/apis => ./apis
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/ntnn/aggregated-apiserver-operator/apis v0.0.0-00010101000000-000000000000
 	github.com/ntnn/kcp-testcontainer v0.0.0-20260830084144-ddaee7e2bf21
 	github.com/stretchr/testify v1.11.1
