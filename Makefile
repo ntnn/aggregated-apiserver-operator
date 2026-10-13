@@ -7,7 +7,7 @@ IMAGE_TAG ?= latest
 IMAGE_PLATFORMS ?= linux/amd64,linux/arm64
 COMMANDS = api-aggregator operator
 
-GOLANGCI_LINT_VER := 2.13.2
+GOLANGCI_LINT_VER := 2.14.0
 GOLANGCI_LINT := $(TOOLS_DIR)/golangci-lint-$(GOLANGCI_LINT_VER)
 
 .PHONY: all
