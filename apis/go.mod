@@ -2,7 +2,7 @@ module github.com/ntnn/aggregated-apiserver-operator/apis
 
 go 1.26.5
 
-require k8s.io/apimachinery v0.37.0
+require k8s.io/apimachinery v0.37.1
 
 require (
 	github.com/fatih/color v1.19.0 // indirect
