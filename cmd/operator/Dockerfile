@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/go/pkg/mod,id=gomod-aggregated-apiserver-operator
     GOARCH=$TARGETARCH \
     go build -o ./bin/operator ./cmd/operator
 
-FROM gcr.io/distroless/static:nonroot@sha256:d62067879de890a1def9da0e7766b7d20810a5e5555cef8506b752437d7a3e88
+FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 WORKDIR /
 COPY --from=builder /workspace/bin/operator /operator
 USER 65532:65532
