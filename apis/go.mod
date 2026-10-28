@@ -2,7 +2,7 @@ module github.com/ntnn/aggregated-apiserver-operator/apis
 
 go 1.26.5
 
-require k8s.io/apimachinery v0.37.1
+require k8s.io/apimachinery v0.37.2
 
 require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
